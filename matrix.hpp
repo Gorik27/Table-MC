@@ -111,4 +111,22 @@ public:
         in.read(reinterpret_cast<char*>(data_.data()), data_.size() * sizeof(T));
         return true;
     }
+
+    Matrix<T> sum_axis_0() const {
+    assert(rows_ > 0 && cols_ > 0 && "Матрица пуста!");
+    
+    // Результат — матрица из 1 строки и cols_ столбцов
+    Matrix<T> result(1, cols_, T()); 
+    
+    // Суммируем элементы каждого столбца
+    for (int c = 0; c < cols_; ++c) {
+        T sum = T();
+        for (int r = 0; r < rows_; ++r) {
+            sum += (*this)(r, c);
+        }
+        result(0, c) = sum;
+    }
+    
+    return result;
+}
 };

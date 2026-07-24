@@ -27,4 +27,4 @@ plt.xlabel('MC steps')
 plt.title('energy')
 
 plt.gcf().tight_layout()
-plt.savefig('mc_plot.png')
+plt.savefig('plot_mc.png')

@@ -12,11 +12,15 @@
 #include "progress_bar.hpp"
 
 int main(int argc, char* argv[]) {
-    std::array<double, 3> mu = {0.0, 10.0, 1.0};
-    std::array<double, 2> mean_energy = {0.0, -1.0};
-    std::array<double, 2> std_energy = {0.0, 1.0};
+    std::vector<double> mu = {0.0, 10.0, 1.0};
     double kT = 3.0;
- 
+
+    std::vector<double> mean_energy = {0.0, -20.0};
+    std::vector<double> std_energy = {0.0, 10.0};
+
+    std::vector<double> mean_interaction = {-7.0, 0.0, -1.0, 0.0}; // BB BC CC CB
+    std::vector<double> std_interaction = {2.5, 1.0, 1.0, 1.0}; // BB BC CC CB
+    
     MPI_Init(&argc, &argv);
     int world_rank;
     int world_size;
@@ -39,7 +43,7 @@ int main(int argc, char* argv[]) {
     std::uniform_real_distribution<double> uniform(0.0, 1.0);
     std::uniform_int_distribution<int> uniform_col(0, cols-1);
 
-    int mc_steps = 1000;
+    int mc_steps = 0;
 
     if (argc > 1) 
     {
@@ -93,10 +97,9 @@ int main(int argc, char* argv[]) {
     int I = world_rank*rows_in_domain; // row index of domain
     
     // occupation matrix
-    Matrix<int> m_glob;
+    Matrix<double> x_glob;
     if (world_rank==0){
-        m_glob = Matrix(rows, cols, 0); 
-        m_glob.save_to_text("m_0.txt");
+        x_glob = Matrix(1, cols, 0.0); 
     }
     Matrix<int> m = Matrix(rows_in_domain, cols, 0); 
     // energy matrix
@@ -107,30 +110,54 @@ int main(int argc, char* argv[]) {
             es(i, j) = dist(gen_shared)*std_energy[j]+mean_energy[j];
         }
     }
-
+    // interaction matrix
+    std::vector<std::unique_ptr<Matrix<double>>> interactions;
+    for (int I = 0; I<n_types-1; ++I){
+        for (int J = 0; J<n_types-1; ++J){
+            interactions.push_back(std::make_unique<Matrix<double>>(cols, cols, 0.0));
+            int index = I*(n_types-1)+J;
+            for (int i = 0; i<cols; ++i){
+                for (int j = i+1; j<cols; ++j){
+                    if (N_mask(i, j)!=0)
+                    {
+                        (*interactions[index])(i, j) = dist(gen_shared)*std_interaction[index]+mean_interaction[index];
+                        (*interactions[index])(j, i) = (*interactions[index])(i, j);
+                    }
+                    
+                }
+            }
+            
+        }
+    }
         
     if (world_rank==0){
         es.save_to_text("es.txt");
+        for (int I = 0; I<n_types-1; ++I){
+            for (int J = 0; J<n_types-1; ++J){
+                interactions[I*(n_types-1)+J]->save_to_text("w"+std::to_string(10*(I+1)+J+1)+".txt");
+            }
+        }
     }
     
 
-    const std::array<int, 2> types = {0, 1};
+    const std::vector<int> types = {0, 1};
 
     int accepted;
     double energy;
-    std::array<int, n_types> number_of_solutes;
+    std::vector<int> number_of_solutes;
     if (world_rank==0){
         accepted = 0;
         energy = 0.0;
         number_of_solutes = {0};
+        number_of_solutes[0] = rows*cols;
     }
     int accepted_loc = 0;
     double energy_loc = 0.0;
-    number_of_solutes[0] = rows*cols;
-    std::array<int, n_types> number_of_solutes_loc = {0};
+    
+    std::vector<int> number_of_solutes_loc = {0};
     number_of_solutes_loc[0] = rows_in_domain*cols;
 
-    int dump_each = 1000;
+    int dump_each = 10000;
     int print_each = 100;
 
     std::ofstream out;
@@ -164,6 +191,21 @@ int main(int argc, char* argv[]) {
         }
 
         double dE = es(j, type_new) - es(j, type_old);
+        int index_old, index_new;
+        for (int k = 0; k<cols; k++){ 
+            if (N_mask(j, k)!=0) // neighbors
+            {
+                if (type_old > 0 && m(i, k) > 0){
+                    index_old = (type_old-1)*(n_types-1)+m(i, k)-1;   
+                    dE -= (*interactions[index_old])(j, k);
+                }
+                if (type_new > 0 && m(i, k) > 0){
+                    index_new = (type_new-1)*(n_types-1)+m(i, k)-1;
+                    dE += (*interactions[index_new])(j, k);
+                }
+            }
+        }
+
         double dF = dE + mu[type_new] - mu[type_old];
 
         double prob = std::exp(-dF/kT);
@@ -176,49 +218,38 @@ int main(int argc, char* argv[]) {
             energy_loc = energy_loc + dE;
         }
 
-        MPI_Gather(
-            m.data(),           // Указатель на начало памяти локальной матрицы
-            m.size(),           // Количество элементов (rows_in_domain * cols) от ОДНОГО процесса
-            MPI_INT,                  // Тип передаваемых данных
-            m_glob.data(),          // Указатель на буфер глобальной матрицы (используется только на Master)
-            m.size(),           // Сколько элементов принять от КАЖДОГО процесса
-            MPI_INT,                  // Тип принимаемых данных
-            0,                        // ID главного процесса (Master)
-            MPI_COMM_WORLD            // Общий коммуникатор
-        );
-
-        MPI_Reduce(
-            number_of_solutes_loc.data(),      
-            number_of_solutes.data(),        
-            number_of_solutes.size(),
-            MPI_INT,
-            MPI_SUM,
-            0,
-            MPI_COMM_WORLD
-        );
-
-        MPI_Reduce(
-            &accepted_loc,      
-            &accepted,        
-            1,
-            MPI_INT,
-            MPI_SUM,
-            0,
-            MPI_COMM_WORLD
-        );
-
-        MPI_Reduce(
-            &energy_loc,      
-            &energy,        
-            1,
-            MPI_DOUBLE,
-            MPI_SUM,
-            0,
-            MPI_COMM_WORLD
-        );
-
         if (step%print_each==0 || step == mc_steps)
         {
+                    MPI_Reduce(
+                        number_of_solutes_loc.data(),      
+                        number_of_solutes.data(),        
+                        n_types,
+                        MPI_INT,
+                        MPI_SUM,
+                        0,
+                        MPI_COMM_WORLD
+                    );
+
+                    MPI_Reduce(
+                        &accepted_loc,      
+                        &accepted,        
+                        1,
+                        MPI_INT,
+                        MPI_SUM,
+                        0,
+                        MPI_COMM_WORLD
+                    );
+
+                    MPI_Reduce(
+                        &energy_loc,      
+                        &energy,        
+                        1,
+                        MPI_DOUBLE,
+                        MPI_SUM,
+                        0,
+                        MPI_COMM_WORLD
+                    );
+
             if (world_rank == 0) 
             {
                 bar.update(step); 
@@ -237,10 +268,30 @@ int main(int argc, char* argv[]) {
 
         if (step%dump_each==0)
         {
+            Matrix<int> mr_int = m.sum_axis_0();
+            Matrix<double> mr_double(1, cols);
+            for (int k = 0; k < cols; k++) {
+                mr_double(0, k) = static_cast<double>(mr_int(0, k));
+            }
+
+            MPI_Reduce(
+                mr_double.data(),      
+                x_glob.data(),        
+                cols,
+                MPI_DOUBLE,
+                MPI_SUM,
+                0,
+                MPI_COMM_WORLD
+            );
+
             if (world_rank == 0) 
             {
+                for (int k = 0; k<cols; k++){
+                    x_glob(0, k) = x_glob(0, k)/rows;
+                }
+                
                 // dump
-                m_glob.save_to_text(dump_dir+"/m_"+std::to_string(step)+".txt");
+                x_glob.save_to_text(dump_dir+"/x_"+std::to_string(step)+".txt");
             }
         }
     }
