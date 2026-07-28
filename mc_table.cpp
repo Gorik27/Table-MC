@@ -10,17 +10,9 @@
 #include <iomanip>
 #include <filesystem>
 #include "progress_bar.hpp"
+#include <argparse/argparse.hpp>
 
 int main(int argc, char* argv[]) {
-    std::vector<double> mu = {0.0, 10.0, 1.0};
-    double kT = 3.0;
-
-    std::vector<double> mean_energy = {0.0, -20.0};
-    std::vector<double> std_energy = {0.0, 10.0};
-
-    std::vector<double> mean_interaction = {-7.0, 0.0, -1.0, 0.0}; // BB BC CC CB
-    std::vector<double> std_interaction = {2.5, 1.0, 1.0, 1.0}; // BB BC CC CB
-    
     MPI_Init(&argc, &argv);
     int world_rank;
     int world_size;
@@ -31,7 +23,8 @@ int main(int argc, char* argv[]) {
     N_mask.load_from_text("N_mask.txt");
 
     int cols = N_mask.rows();
-    int rows = world_size;
+    int rows;
+    int mc_steps;
 
     unsigned int shared_seed = 0;
     std::mt19937 gen_shared(shared_seed);
@@ -43,46 +36,77 @@ int main(int argc, char* argv[]) {
     std::uniform_real_distribution<double> uniform(0.0, 1.0);
     std::uniform_int_distribution<int> uniform_col(0, cols-1);
 
-    int mc_steps = 0;
 
-    if (argc > 1) 
-    {
-        try 
-        {
-            rows = std::stoi(argv[1]);
-        } 
-        catch (const std::exception& e) 
-        {
-            if (world_rank == 0) 
-            {
-                std::cerr << "[ERROR] wrong argument for number of rows: " << argv[1] << std::endl;
-                std::cout << "[INFO] Input number of rows is set to Nprocs: "  << rows << std::endl;
-            }
-        }
+    argparse::ArgumentParser program("mc_table");
 
-        if (argc > 2)
-        {
-            try 
-            {
-                mc_steps = std::stoi(argv[2]);
-            } 
-            catch (const std::exception& e) 
-            {
-                if (world_rank == 0) 
-                {
-                    std::cerr << "[ERROR] wrong argument for number of mc_steps: " << argv[2] << std::endl;
-                    std::cout << "[INFO] Number of mc_steps is set to default: "  << mc_steps << std::endl;
-                }
-            }
+    program.add_argument("-r", "--rows")
+        .help("number of rows")
+        .scan<'i', int>()
+        .default_value(world_size)
+        .store_into(rows);
+
+    program.add_argument("-s", "--steps")
+        .help("number of MC steps")
+        .scan<'i', int>()
+        .default_value(100)
+        .store_into(mc_steps);
+
+    double kT;
+    program.add_argument("-T")
+        .help("temperature in [kT]")
+        .scan<'g', double>()
+        .default_value(3.0)
+        .store_into(kT);
+
+    program.add_argument("-m", "--mu")
+        .help("chemical potentials")
+        .nargs(argparse::nargs_pattern::at_least_one)
+        .scan<'g', double>()
+        .default_value(std::vector<double>{0.0, 0.0});
+    
+
+    try {
+    program.parse_args(argc, argv);
+    }
+    catch (const std::exception& err) {
+        if (world_rank==0){
+            std::cerr << err.what() << std::endl;
+            std::cerr << program;
         }
-    } 
-    else 
-    {
-        if (world_rank == 0) 
-        {
-            std::cout << "[INFO] Input number of rows is set to Nprocs: " << rows << std::endl;
-            std::cout << "[INFO] Number of mc_steps is set to default: "  << mc_steps << std::endl;
-        }
+        return 1;
+    }
+
+    std::vector<double> mu = program.get<std::vector<double>>("--mu");
+    const int n_types = mu.size();
+    std::string mu_str = "";
+    for (double val : mu) {
+        std::string s = std::to_string(val);
+        s.erase(s.find_last_not_of('0') + 1, std::string::npos); // Удаляем нули на конце
+        if (s.back() == '.') s.pop_back();                       // Удаляем точку, если число целое
+        mu_str += s + " ";
+    }
+
+    int dump_each = 10000;
+    int print_each = 100;
+
+    const std::vector<int> types = {0, 1, 2};    
+
+    std::vector<double> mean_energy = {0.0, -20.0, -10.0};
+    std::vector<double> std_energy = {0.0, 10.0, 10.0};
+
+    std::vector<double> mean_interaction = {-7.0, 0.0, -1.0, 0.0}; // BB BC CC CB
+    std::vector<double> std_interaction = {2.5, 1.0, 1.0, 1.0}; // BB BC CC CB
+
+    if (world_rank==0){
+        std::cout << "=============================" << std::endl;
+        std::cout << "===== Input parameters ======" << std::endl;
+        std::cout << "=============================" << std::endl;
+        std::cout << "       rows     : " << rows << std::endl;
+        std::cout << "       cols     : " << cols << std::endl;
+        std::cout << "       MC steps : " << mc_steps << std::endl;
+        std::cout << "       types    : " << n_types << std::endl;
+        std::cout << "       mu       : " << mu_str << std::endl;
+        std::cout << "=============================\n" << std::endl;
     }
 
     int rows_in_domain = rows/world_size;
@@ -92,10 +116,8 @@ int main(int argc, char* argv[]) {
         std::cout << "Number of rows is set to " 
                     << rows << std::endl;
     }
-    
+    int natoms = rows*cols;
 
-    int I = world_rank*rows_in_domain; // row index of domain
-    
     // occupation matrix
     Matrix<double> x_glob;
     if (world_rank==0){
@@ -103,7 +125,6 @@ int main(int argc, char* argv[]) {
     }
     Matrix<int> m = Matrix(rows_in_domain, cols, 0); 
     // energy matrix
-    const int n_types = mean_energy.size();
     Matrix<double> es = Matrix(cols, n_types, 0.0);
     for (int i = 0; i<cols; ++i){
         for (int j = 1; j<n_types; ++j){
@@ -116,6 +137,9 @@ int main(int argc, char* argv[]) {
         for (int J = 0; J<n_types-1; ++J){
             interactions.push_back(std::make_unique<Matrix<double>>(cols, cols, 0.0));
             int index = I*(n_types-1)+J;
+            if (world_rank==0){
+                std::cout << "interaction: " << index << " mean: " << mean_interaction[index] << " std: " << std_interaction[index] << std::endl;  
+            }
             for (int i = 0; i<cols; ++i){
                 for (int j = i+1; j<cols; ++j){
                     if (N_mask(i, j)!=0)
@@ -138,13 +162,10 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    
-
-    const std::vector<int> types = {0, 1};
 
     int accepted;
     double energy;
-    std::vector<int> number_of_solutes;
+    std::vector<int> number_of_solutes(n_types, 0);
     if (world_rank==0){
         accepted = 0;
         energy = 0.0;
@@ -154,11 +175,8 @@ int main(int argc, char* argv[]) {
     int accepted_loc = 0;
     double energy_loc = 0.0;
     
-    std::vector<int> number_of_solutes_loc = {0};
+    std::vector<int> number_of_solutes_loc(n_types, 0);
     number_of_solutes_loc[0] = rows_in_domain*cols;
-
-    int dump_each = 10000;
-    int print_each = 100;
 
     std::ofstream out;
     std::string dump_dir = "dump";
@@ -171,10 +189,10 @@ int main(int argc, char* argv[]) {
         }
         out << "mc_output" << std::endl;
         out << std::left; 
-        out << std::setw(10) << "step" 
+        out << std::setw(14) << "step" 
             << std::setw(12) << "acc";
-        for (int k = 0; k < types.size(); k++) {
-            out << std::setw(10) << ("N" + std::to_string(k));
+        for (int k = 0; k < n_types; k++) {
+            out << std::setw(12) << ("X_" + std::to_string(k));
         }
         out << std::setw(15) << "energy" << std::endl;
     }
@@ -256,10 +274,10 @@ int main(int argc, char* argv[]) {
                 //thermo
                 double acc = static_cast<double>(accepted)/dump_each/world_size;
                 out << std::left;
-                out << std::setw(10) << step;
+                out << std::setw(14) << step;
                 out << std::setw(12) << std::fixed << std::setprecision(6) << acc;
-                for (int k = 0; k<types.size(); k++){
-                    out << std::setw(10) << number_of_solutes[k];
+                for (int k = 0; k<n_types; k++){
+                    out << std::setw(12) << std::fixed << std::setprecision(4) << static_cast<double>(number_of_solutes[k])/natoms;
                 }
                 out << std::setw(15) << std::fixed << std::setprecision(4) << energy << std::endl;
             }
