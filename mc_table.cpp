@@ -58,12 +58,24 @@ int main(int argc, char* argv[]) {
         .default_value(3.0)
         .store_into(kT);
 
+    double kappa;
+    program.add_argument("-k", "--kappa")
+        .help("kappa")
+        .scan<'g', double>()
+        .default_value(0.0)
+        .store_into(kappa);
+
     program.add_argument("-m", "--mu")
         .help("chemical potentials")
         .nargs(argparse::nargs_pattern::at_least_one)
         .scan<'g', double>()
         .default_value(std::vector<double>{0.0, 0.0});
-    
+        
+    program.add_argument("-c", "--conc")
+        .help("target concentrations")
+        .nargs(argparse::nargs_pattern::at_least_one)
+        .scan<'g', double>()
+        .default_value(std::vector<double>{0.5});
 
     try {
     program.parse_args(argc, argv);
@@ -74,6 +86,17 @@ int main(int argc, char* argv[]) {
             std::cerr << program;
         }
         return 1;
+    }
+
+    bool is_vcsgc = program.is_used("--kappa");
+
+    std::vector<double> concentrations_target = program.get<std::vector<double>>("--conc");
+    std::string c_str = "";
+    for (double val : concentrations_target) {
+        std::string s = std::to_string(val);
+        s.erase(s.find_last_not_of('0') + 1, std::string::npos); // Удаляем нули на конце
+        if (s.back() == '.') s.pop_back();                       // Удаляем точку, если число целое
+        c_str += s + " ";
     }
 
     std::vector<double> mu = program.get<std::vector<double>>("--mu");
@@ -98,15 +121,20 @@ int main(int argc, char* argv[]) {
     std::vector<double> std_interaction = {2.5, 1.0, 1.0, 1.0}; // BB BC CC CB
 
     if (world_rank==0){
-        std::cout << "=============================" << std::endl;
-        std::cout << "===== Input parameters ======" << std::endl;
-        std::cout << "=============================" << std::endl;
+        std::cout << "===================================" << std::endl;
+        std::cout << "===== Input parameters ============" << std::endl;
+        std::cout << "===================================" << std::endl;
         std::cout << "       rows     : " << rows << std::endl;
         std::cout << "       cols     : " << cols << std::endl;
         std::cout << "       MC steps : " << mc_steps << std::endl;
         std::cout << "       types    : " << n_types << std::endl;
         std::cout << "       mu       : " << mu_str << std::endl;
-        std::cout << "=============================\n" << std::endl;
+        if (is_vcsgc){
+        std::cout << "===== VCSGC ensemble is used ======" << std::endl;
+        std::cout << "       kappa    : " << kappa << std::endl;
+        std::cout << "       target c : " << c_str << std::endl;
+        }
+        std::cout << "===================================\n" << std::endl;
     }
 
     int rows_in_domain = rows/world_size;
@@ -116,14 +144,26 @@ int main(int argc, char* argv[]) {
         std::cout << "Number of rows is set to " 
                     << rows << std::endl;
     }
+
     int natoms = rows*cols;
+    std::vector<int> number_of_solutes_target(n_types, 0);
+    double c0 = 1.0;
+    for (int k = 1; k<n_types; k++){
+        number_of_solutes_target[k] = static_cast<int>(concentrations_target[k-1]*natoms);
+        c0 = c0 - concentrations_target[k-1];
+    }
+    if (c0<0.0){
+        std::cerr << "[ERROR]: Total solute concentration exeeds 100%!!!!" << std::endl;
+        return 1;
+    }
+    number_of_solutes_target[0] = static_cast<int>(c0*natoms);
 
     // occupation matrix
     Matrix<double> x_glob;
     if (world_rank==0){
-        x_glob = Matrix(1, cols, 0.0); 
+        x_glob = Matrix(n_types, cols, 0.0); 
     }
-    Matrix<int> m = Matrix(rows_in_domain, cols, 0); 
+    Matrix<int> m = Matrix(rows_in_domain, cols, types[0]); 
     // energy matrix
     Matrix<double> es = Matrix(cols, n_types, 0.0);
     for (int i = 0; i<cols; ++i){
@@ -165,15 +205,15 @@ int main(int argc, char* argv[]) {
 
     int accepted;
     double energy;
-    std::vector<int> number_of_solutes(n_types, 0);
     if (world_rank==0){
         accepted = 0;
         energy = 0.0;
-        number_of_solutes = {0};
-        number_of_solutes[0] = rows*cols;
     }
     int accepted_loc = 0;
     double energy_loc = 0.0;
+
+    std::vector<int> number_of_solutes(n_types, 0);
+    number_of_solutes[0] = rows*cols;
     
     std::vector<int> number_of_solutes_loc(n_types, 0);
     number_of_solutes_loc[0] = rows_in_domain*cols;
@@ -181,10 +221,18 @@ int main(int argc, char* argv[]) {
     std::ofstream out;
     std::string dump_dir = "dump";
     if (world_rank==0){
+
+        try {
+            std::uintmax_t deleted_count = std::filesystem::remove_all(dump_dir);
+        } 
+        catch (const std::filesystem::filesystem_error& e) {
+            std::cerr << "[ERROR]: error during removing of dump folder: " << e.what() << std::endl;
+        }
+
         std::filesystem::create_directory(dump_dir); 
         out.open("mc_output.txt");
         if (!out.is_open()) {
-            std::cerr << "Ошибка: не удалось открыть файл для записи!" << std::endl;
+            std::cerr << "[ERROR]: error during creating of mc_output.txt file:" << std::endl;
             return 1; // или другой способ обработки ошибки
         }
         out << "mc_output" << std::endl;
@@ -205,7 +253,7 @@ int main(int argc, char* argv[]) {
         int type_old = m(i, j);
         int type_new = type_old;
         while (type_new == type_old){
-            type_new = types[uniform_col(gen)%n_types];
+            type_new = types[uniform_col(gen)%n_types];//TODO make specific generator
         }
 
         double dE = es(j, type_new) - es(j, type_old);
@@ -228,26 +276,55 @@ int main(int argc, char* argv[]) {
 
         double prob = std::exp(-dF/kT);
         double p = uniform(gen);
-        if (p<prob){
+
+        std::vector<int> dN_tot(n_types, 0);
+        std::vector<int> dN(n_types, 0);
+        if (is_vcsgc){
+            if (p<prob){
+                dN[type_new] = +1;
+                dN[type_old] = -1;
+            }
+            MPI_Allreduce(dN.data(), dN_tot.data(), n_types, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        }
+
+        bool acceptance_flag = false;
+        
+        if (is_vcsgc){
+            double dF_glob = 0;
+            for (int k = 1; k<n_types; k++){
+                dF_glob += kappa*dN_tot[k]*(dN_tot[k] + 2*(number_of_solutes[k]-number_of_solutes_target[k]));
+            }
+            double prob_glob = std::exp(-dF_glob/kT);
+            double p_glob = uniform(gen_shared);
+            acceptance_flag = (p_glob<prob_glob);
+            /*   if (world_rank==0){
+                out << dF_glob << " " <<  prob_glob << " " << acceptance_flag << std::endl;
+            } */
+        }
+        else {
+            acceptance_flag = true;
+        }
+
+        if (p<prob && acceptance_flag){
+            /* if (world_rank==0){
+                out << "acc " << dN_tot[1] << std::endl;
+            } */
             m(i, j) = type_new;
             accepted_loc ++;
             number_of_solutes_loc[type_new]++;
             number_of_solutes_loc[type_old]--;
-            energy_loc = energy_loc + dE;
+            energy_loc += dE;
+        }
+        
+
+        if (acceptance_flag){
+            for (int k = 0; k<n_types; k++){
+                number_of_solutes[k] += dN_tot[k];
+            }
         }
 
         if (step%print_each==0 || step == mc_steps)
         {
-                    MPI_Reduce(
-                        number_of_solutes_loc.data(),      
-                        number_of_solutes.data(),        
-                        n_types,
-                        MPI_INT,
-                        MPI_SUM,
-                        0,
-                        MPI_COMM_WORLD
-                    );
-
                     MPI_Reduce(
                         &accepted_loc,      
                         &accepted,        
@@ -286,16 +363,17 @@ int main(int argc, char* argv[]) {
 
         if (step%dump_each==0)
         {
-            Matrix<int> mr_int = m.sum_axis_0();
-            Matrix<double> mr_double(1, cols);
-            for (int k = 0; k < cols; k++) {
-                mr_double(0, k) = static_cast<double>(mr_int(0, k));
+            Matrix<double> mr(n_types, cols, 0.0);
+            for (int ii = 0; ii<rows_in_domain; ii++){
+                for (int jj = 0; jj<cols; jj++){
+                    mr(m(ii, jj), jj)++;
+                }
             }
 
             MPI_Reduce(
-                mr_double.data(),      
+                mr.data(),      
                 x_glob.data(),        
-                cols,
+                cols*n_types,
                 MPI_DOUBLE,
                 MPI_SUM,
                 0,
@@ -304,10 +382,11 @@ int main(int argc, char* argv[]) {
 
             if (world_rank == 0) 
             {
-                for (int k = 0; k<cols; k++){
-                    x_glob(0, k) = x_glob(0, k)/rows;
+                for (int k = 0; k<n_types; k++){
+                    for (int p = 0; p<cols; p++){
+                        x_glob(k, p) = x_glob(k, p)/rows;
+                    }
                 }
-                
                 // dump
                 x_glob.save_to_text(dump_dir+"/x_"+std::to_string(step)+".txt");
             }

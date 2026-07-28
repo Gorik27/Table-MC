@@ -4,8 +4,6 @@ from glob import glob
 from natsort import natsorted
 from tqdm import tqdm
 
-ls = natsorted(glob("dump/x_*.txt"))
-
 df = np.loadtxt('es.txt', skiprows=1)
 e0 = df[:,1]-df[:,0]
 
@@ -15,14 +13,15 @@ em = np.repeat(df[:, 0], df[:,1].astype(int))
 w_table = np.loadtxt('w11.txt', skiprows=1)
 w = w_table.sum(axis=0)
 
+ls = natsorted(glob("dump/x_*.txt"))
 N = len(ls)
 n0 = int(round(N*0.8))
 m0 = np.loadtxt(ls[-1], skiprows=1)
-x = np.zeros(m0.shape[0])
+x = np.zeros(m0.shape[1])
 cnt = 0
 
-for file in tqdm(ls[n0::100]):
-    xi = np.loadtxt(file, skiprows=1)
+for file in tqdm(ls[n0::10]):
+    xi = np.loadtxt(file, skiprows=1)[1]
     x += xi
     cnt += 1
 
