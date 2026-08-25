@@ -1,16 +1,23 @@
 #include <mpi.h>
 #include <iostream>
 #include <fstream>
+#include <format>
 #include <cmath>
 #include <string>
 #include <cassert>
-#include "matrix.hpp"
 #include <random>
 #include <array>
 #include <iomanip>
 #include <filesystem>
 #include "progress_bar.hpp"
 #include <argparse/argparse.hpp>
+#include "matrix.hpp"
+#include "MpiDataLoader.h"
+#include "PartitionLoader.h"
+#include <algorithm>
+#include "Communicator.h"
+#include <unordered_set>
+
 
 int main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
@@ -19,10 +26,21 @@ int main(int argc, char* argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
-    Matrix<int> N_mask; 
-    N_mask.load_from_text("N_mask.txt");
+    PartitionLoader partition;
+    partition.load(std::format("partitions/{}.txt", world_rank+1));
 
-    int cols = N_mask.rows();
+    int z_max = 30;
+    MpiDataLoader loader(z_max*2+1);
+    try {
+        loader.loadAndDistribute("new_neighbors.txt", "new_eint.txt", partition.partition, partition.nbrs);
+
+    } catch (const std::exception& e) {
+        std::cerr << "Rank " << world_rank << " поймал исключение: " << e.what() << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    
+    int cols = partition.nsites;
+    int cols_ghost = loader.local_ind.size();
     int rows;
     int mc_steps;
 
@@ -42,7 +60,7 @@ int main(int argc, char* argv[]) {
     program.add_argument("-r", "--rows")
         .help("number of rows")
         .scan<'i', int>()
-        .default_value(world_size)
+        .default_value(10)
         .store_into(rows);
 
     program.add_argument("-s", "--steps")
@@ -101,6 +119,8 @@ int main(int argc, char* argv[]) {
 
     std::vector<double> mu = program.get<std::vector<double>>("--mu");
     const int n_types = mu.size();
+    std::uniform_int_distribution<int> uniform_type(0, n_types-1);
+
     std::string mu_str = "";
     for (double val : mu) {
         std::string s = std::to_string(val);
@@ -124,28 +144,24 @@ int main(int argc, char* argv[]) {
         std::cout << "===================================" << std::endl;
         std::cout << "===== Input parameters ============" << std::endl;
         std::cout << "===================================" << std::endl;
-        std::cout << "       rows     : " << rows << std::endl;
-        std::cout << "       cols     : " << cols << std::endl;
-        std::cout << "       MC steps : " << mc_steps << std::endl;
-        std::cout << "       types    : " << n_types << std::endl;
-        std::cout << "       mu       : " << mu_str << std::endl;
+        std::cout << "       rows               : " << rows << std::endl;
+        std::cout << "       total site types   : " << loader.total_site_types << std::endl;
+        std::cout << "       MC steps           : " << mc_steps << std::endl;
+        std::cout << "       types              : " << n_types << std::endl;
+        std::cout << "       mu                 : " << mu_str << std::endl;
         if (is_vcsgc){
         std::cout << "===== VCSGC ensemble is used ======" << std::endl;
-        std::cout << "       kappa    : " << kappa << std::endl;
-        std::cout << "       target c : " << c_str << std::endl;
+        std::cout << "       kappa              : " << kappa << std::endl;
+        std::cout << "       target c           : " << c_str << std::endl;
         }
         std::cout << "===================================\n" << std::endl;
     }
 
-    int rows_in_domain = rows/world_size;
-    std::uniform_int_distribution<int> uniform_row(0, rows_in_domain-1);
-    rows = rows_in_domain*world_size;
-    if (world_rank == 0) {
-        std::cout << "Number of rows is set to " 
-                    << rows << std::endl;
-    }
+    
+    std::uniform_int_distribution<int> uniform_row(0, rows-1);
 
-    int natoms = rows*cols;
+    int natoms = rows*loader.total_site_types;
+
     std::vector<int> number_of_solutes_target(n_types, 0);
     double c0 = 1.0;
     for (int k = 1; k<n_types; k++){
@@ -163,44 +179,31 @@ int main(int argc, char* argv[]) {
     if (world_rank==0){
         x_glob = Matrix(n_types, cols, 0.0); 
     }
-    Matrix<int> m = Matrix(rows_in_domain, cols, types[0]); 
+    Matrix<int> m = Matrix(rows, cols_ghost, types[0]); 
     // energy matrix
     Matrix<double> es = Matrix(cols, n_types, 0.0);
     for (int i = 0; i<cols; ++i){
         for (int j = 1; j<n_types; ++j){
-            es(i, j) = dist(gen_shared)*std_energy[j]+mean_energy[j];
+            es(i, j) = dist(gen_shared)*std_energy[j]+mean_energy[j]; // TODO: load from file
         }
     }
     // interaction matrix
     std::vector<std::unique_ptr<Matrix<double>>> interactions;
     for (int I = 0; I<n_types-1; ++I){
         for (int J = 0; J<n_types-1; ++J){
-            interactions.push_back(std::make_unique<Matrix<double>>(cols, cols, 0.0));
+            interactions.push_back(std::make_unique<Matrix<double>>(cols, z_max, 0.0));
             int index = I*(n_types-1)+J;
-            if (world_rank==0){
-                std::cout << "interaction: " << index << " mean: " << mean_interaction[index] << " std: " << std_interaction[index] << std::endl;  
-            }
             for (int i = 0; i<cols; ++i){
-                for (int j = i+1; j<cols; ++j){
-                    if (N_mask(i, j)!=0)
-                    {
-                        (*interactions[index])(i, j) = dist(gen_shared)*std_interaction[index]+mean_interaction[index];
-                        (*interactions[index])(j, i) = (*interactions[index])(i, j);
-                    }
-                    
+                for (int j = i+1; j<z_max; ++j){
+                    (*interactions[index])(i, j) = loader.local_eint[i, j];      // TODO: сделать поддержку нескольких сортов атомов
                 }
             }
             
         }
-    }
+    } 
         
     if (world_rank==0){
-        es.save_to_text("es.txt");
-        for (int I = 0; I<n_types-1; ++I){
-            for (int J = 0; J<n_types-1; ++J){
-                interactions[I*(n_types-1)+J]->save_to_text("w"+std::to_string(10*(I+1)+J+1)+".txt");
-            }
-        }
+        es.save_to_text("es.txt"); // TODO: убрать
     }
 
     int accepted;
@@ -213,10 +216,10 @@ int main(int argc, char* argv[]) {
     double energy_loc = 0.0;
 
     std::vector<int> number_of_solutes(n_types, 0);
-    number_of_solutes[0] = rows*cols;
+    number_of_solutes[0] = natoms;
     
     std::vector<int> number_of_solutes_loc(n_types, 0);
-    number_of_solutes_loc[0] = rows_in_domain*cols;
+    number_of_solutes_loc[0] = rows*cols;
 
     std::ofstream out;
     std::string dump_dir = "dump";
@@ -233,7 +236,7 @@ int main(int argc, char* argv[]) {
         out.open("mc_output.txt");
         if (!out.is_open()) {
             std::cerr << "[ERROR]: error during creating of mc_output.txt file:" << std::endl;
-            return 1; // или другой способ обработки ошибки
+            return 1; 
         }
         out << "mc_output" << std::endl;
         out << std::left; 
@@ -253,22 +256,20 @@ int main(int argc, char* argv[]) {
         int type_old = m(i, j);
         int type_new = type_old;
         while (type_new == type_old){
-            type_new = types[uniform_col(gen)%n_types];//TODO make specific generator
+            type_new = types[uniform_type(gen)];
         }
 
         double dE = es(j, type_new) - es(j, type_old);
         int index_old, index_new;
-        for (int k = 0; k<cols; k++){ 
-            if (N_mask(j, k)!=0) // neighbors
-            {
-                if (type_old > 0 && m(i, k) > 0){
-                    index_old = (type_old-1)*(n_types-1)+m(i, k)-1;   
-                    dE -= (*interactions[index_old])(j, k);
-                }
-                if (type_new > 0 && m(i, k) > 0){
-                    index_new = (type_new-1)*(n_types-1)+m(i, k)-1;
-                    dE += (*interactions[index_new])(j, k);
-                }
+        for (int k = 0; k<loader.local_z[j]; k++){ // over neighbors of j
+            int jk = loader.getNbrLocalIndex(j, k); 
+            if (type_old > 0 && m(i, jk) > 0){
+                index_old = (type_old-1)*(n_types-1)+m(i, jk)-1;   
+                dE -= (*interactions[index_old])(j, k);
+            }
+            if (type_new > 0 && m(i, jk) > 0){
+                index_new = (type_new-1)*(n_types-1)+m(i, jk)-1;
+                dE += (*interactions[index_new])(j, k);
             }
         }
 
@@ -292,23 +293,17 @@ int main(int argc, char* argv[]) {
         if (is_vcsgc){
             double dF_glob = 0;
             for (int k = 1; k<n_types; k++){
-                dF_glob += kappa*dN_tot[k]*(dN_tot[k] + 2*(number_of_solutes[k]-number_of_solutes_target[k]));
+                dF_glob += kappa*dN_tot[k]*(dN_tot[k] + 2*(number_of_solutes[k]-number_of_solutes_target[k]))/natoms;
             }
             double prob_glob = std::exp(-dF_glob/kT);
             double p_glob = uniform(gen_shared);
             acceptance_flag = (p_glob<prob_glob);
-            /*   if (world_rank==0){
-                out << dF_glob << " " <<  prob_glob << " " << acceptance_flag << std::endl;
-            } */
         }
         else {
             acceptance_flag = true;
         }
 
         if (p<prob && acceptance_flag){
-            /* if (world_rank==0){
-                out << "acc " << dN_tot[1] << std::endl;
-            } */
             m(i, j) = type_new;
             accepted_loc ++;
             number_of_solutes_loc[type_new]++;
@@ -316,10 +311,60 @@ int main(int argc, char* argv[]) {
             energy_loc += dE;
         }
         
+        std::vector<int> target_ranks;
+        std::unordered_map<int, int> block_ind;
+        std::unordered_set<int> seen;
+        int map_cnt = 0; 
+        for (int j = 0; j<cols; j++){
+                for (int k = 0; k<partition.z[j]; k++){ // over interblock bonds of j
+                    // найдем нужный rank=block and nbr_id
+                    int block  = partition.getNbrBlock(j, k);
+                    if (!seen.count(block)) {
+                        seen.insert(block);
+                        target_ranks.push_back(block-1);
+                        block_ind[block] = map_cnt;
+                        map_cnt ++;
+                    }
+                }
+            }
+        int num_partners = target_ranks.size();
+        std::vector<std::vector<InitRequest>> my_requests(num_partners);
+        for (int j = 0; j<cols; j++){
+                for (int k = 0; k<partition.z[j]; k++){ 
+                    int block  = partition.getNbrBlock(j, k);
+                    int nbr_id = partition.getNbrID(j, k);
+                    InitRequest req = {nbr_id};
+                    my_requests[block_ind[block]].push_back(req);
+                }
+            }
+        MatrixExchanger<int> exchanger(world_rank, world_size);
+        exchanger.initialize_connections(m, target_ranks, my_requests, loader.local_ind);
 
         if (acceptance_flag){
             for (int k = 0; k<n_types; k++){
                 number_of_solutes[k] += dN_tot[k];
+            }
+        }
+
+        exchanger.exchange_step(m);
+
+        // 3. Читаем полученные столбцы целиком
+        for (int p = 0; p < num_partners; ++p) {
+            // Сколько столбцов мы просили у p-го соседа?
+            int num_requested_cols = my_requests[p].size();
+
+            for (int k = 0; k < num_requested_cols; ++k) {
+                int original_key_id = my_requests[p][k].key_id; 
+                int col_size = 0;
+                // Получаем прямой указатель на k-й запрошенный столбец от p-го соседа
+                const int* column_data = exchanger.get_received_column(p, k, col_size);
+                
+                // Теперь column_data — это обычный непрерывный массив размера col_size
+                for (int r = 0; r < col_size; ++r) {
+                    int val = column_data[r]; // Это элемент строки 'r' чужого столбца
+                    // Использовать val...
+                    m(r, loader.local_ind[original_key_id]) = val;
+                }
             }
         }
 
@@ -363,8 +408,10 @@ int main(int argc, char* argv[]) {
 
         if (step%dump_each==0)
         {
-            Matrix<double> mr(n_types, cols, 0.0);
-            for (int ii = 0; ii<rows_in_domain; ii++){
+            // TODO переписать со сбора по строкам (REDUCE) на сбор столбцов (GATHER)
+
+            /* Matrix<double> mr(n_types, cols, 0.0); 
+            for (int ii = 0; ii<rows; ii++){
                 for (int jj = 0; jj<cols; jj++){
                     mr(m(ii, jj), jj)++;
                 }
@@ -389,8 +436,8 @@ int main(int argc, char* argv[]) {
                 }
                 // dump
                 x_glob.save_to_text(dump_dir+"/x_"+std::to_string(step)+".txt");
-            }
-        }
+            }*/
+        } 
     }
 
     if (world_rank==0){

@@ -17,7 +17,8 @@ plt.xlabel('MC steps')
 plt.title('acceptance')
 
 plt.subplot(222)
-plt.plot(t, N1/(N0+N1))
+x = N1/(N0+N1)
+plt.plot(t, x)
 plt.xlabel('MC steps')
 plt.title('concentration')
 
@@ -28,3 +29,7 @@ plt.title('energy')
 
 plt.gcf().tight_layout()
 plt.savefig('plot_mc.png')
+
+print("final conc:", x[-1])
+print("final energy:", e[-1])
+print("final energy per solute atom:", e[-1]/x[-1])

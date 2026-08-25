@@ -5,6 +5,7 @@
 #include <fstream>
 #include <string>
 #include <cassert>
+#include <stdexcept>
 
 // Функция для записи массива в текстовом формате
 bool save_vector(const std::string& filename, const std::vector<double>& array) {
@@ -40,7 +41,13 @@ public:
 
     // Доступ к элементам
     T& operator()(int r, int c) {
-        assert(r >= 0 && r < rows_ && c >= 0 && c < cols_ && "Индекс строк/столбцов вышел за границы!");
+        if (r < 0 || r >= rows_ || c < 0 || c >= cols_) {
+            throw std::out_of_range(
+            "Индекс вышел за границы! Запрошено: [" + std::to_string(r) + ", " + std::to_string(c) + 
+            "], Размер матрицы: " + std::to_string(rows_) + "x" + std::to_string(cols_)
+            );
+        }
+        //assert(r >= 0 && r < rows_ && c >= 0 && c < cols_ && "Индекс строк/столбцов вышел за границы!");
         return data_[r * cols_ + c];
     }
 

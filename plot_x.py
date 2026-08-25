@@ -4,6 +4,9 @@ from glob import glob
 from natsort import natsorted
 from tqdm import tqdm
 
+
+rows = 100
+
 df = np.loadtxt('es.txt', skiprows=1)
 e0 = df[:,1]-df[:,0]
 
@@ -26,6 +29,9 @@ for file in tqdm(ls[n0::10]):
     cnt += 1
 
 x = x/cnt
+
+srt = np.argsort(x)[::-1]
+xmc = x[srt]
 
 srt0 = np.argsort(e0)
 xs0 = x[srt0]
@@ -66,7 +72,7 @@ print('mean x_mc   : ', x.mean())
 
 plt.figure(dpi=300)
 plt.subplot(131)
-plt.plot(es0, xs0, color='black', label='MC')
+plt.plot(es0, xmc, color='black', label='MC')
 plt.plot(es0, x0_fermi, color='red', label='fermi')
 plt.xlabel('energy')
 plt.ylabel('X')
@@ -75,7 +81,7 @@ plt.gca().set_box_aspect(1)
 plt.title('original spectrum')
 
 plt.subplot(132)
-plt.plot(esr, xsr, color='black', label='MC')
+plt.plot(esr, xmc, color='black', label='MC')
 plt.plot(esr, xr_fermi, color='red', label='fermi')
 plt.xlabel('energy')
 plt.ylabel('X')
@@ -84,8 +90,10 @@ plt.gca().set_box_aspect(1)
 plt.title('NCRS')
 
 plt.subplot(133)
-plt.plot(esm, xsm, color='black', label='MC')
+plt.plot(esm, xmc, color='black', label='MC')
 plt.plot(esm, xm_fermi, color='red', label='fermi')
+
+
 plt.xlabel('energy')
 plt.ylabel('X')
 plt.legend()
@@ -97,3 +105,8 @@ plt.title('modified spectrum')
 plt.gcf().tight_layout()
 plt.savefig("plot_x.png")
 
+print("\noriginal energy:", np.sum(es0*x0_fermi)*rows)
+print("NCRS energy:", np.sum(esr*xr_fermi)*rows)
+print("mod energy:", np.sum(esm*xm_fermi)*rows)
+
+print("mod energy per solute atom:", np.sum(esm*xm_fermi)*rows/xm_fermi.mean())

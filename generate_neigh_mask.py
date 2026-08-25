@@ -3,7 +3,7 @@ import numpy as np
 from scipy import stats
 
 
-N = 1000 # number of site types
+N = 10000 # number of site types
 Z = 11 # average number of neighbors (and mode of distributuion)
 
 def generate(Z, N):
@@ -30,7 +30,7 @@ def generate(Z, N):
     return m
 
 m = generate(Z, N)
-np.savetxt("N_mask.txt", m, header=f'{N} {N}', comment='', fmt='%d')
+np.savetxt("N_mask.txt", m, header=f'{N} {N}', comments='', fmt='%d')
 st = m.sum(axis=0)
 mode = stats.mode(st, keepdims=True).mode[0]
 
