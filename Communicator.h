@@ -45,7 +45,15 @@ public:
         m_mpi_type = get_mpi_type<T>(); 
     }
 
+
     ~MatrixExchanger() {
+        for (auto& peer : m_peers) {
+            if (peer.send_msg != MPI_REQUEST_NULL) MPI_Request_free(&peer.send_msg);
+            if (peer.recv_msg != MPI_REQUEST_NULL) MPI_Request_free(&peer.recv_msg);
+        }
+    }
+
+    void mpi_finalize(){
         for (auto& peer : m_peers) {
             if (peer.send_msg != MPI_REQUEST_NULL) MPI_Request_free(&peer.send_msg);
             if (peer.recv_msg != MPI_REQUEST_NULL) MPI_Request_free(&peer.recv_msg);

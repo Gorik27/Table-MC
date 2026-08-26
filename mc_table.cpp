@@ -16,7 +16,6 @@
 #include "PartitionLoader.h"
 #include <algorithm>
 #include "Communicator.h"
-#include <unordered_set>
 
 
 int main(int argc, char* argv[]) {
@@ -206,13 +205,11 @@ int main(int argc, char* argv[]) {
         es.save_to_text("es.txt"); // TODO: убрать
     }
 
-    int accepted;
     double energy;
     if (world_rank==0){
-        accepted = 0;
         energy = 0.0;
     }
-    int accepted_loc = 0;
+    int accepted = 0;
     double energy_loc = 0.0;
 
     std::vector<int> number_of_solutes(n_types, 0);
@@ -247,6 +244,38 @@ int main(int argc, char* argv[]) {
         }
         out << std::setw(15) << "energy" << std::endl;
     }
+
+    /// Setting up MPI communication for occupation matrix (m)
+
+    /// find all blocks to communicate
+    std::vector<int> target_ranks;
+    std::unordered_map<int, int> block_ind;
+    int block_ind_cnt = 0; 
+    for (int j = 0; j<cols; j++){
+            for (int k = 0; k<partition.z[j]; k++){ // over interblock bonds of j
+                // найдем нужный rank=block and nbr_id
+                int block  = partition.getNbrBlock(j, k);
+                if (block_ind.find(block) == block_ind.end()) { // there is no key "block" in dict (first appearance)
+                    target_ranks.push_back(block-1);
+                    block_ind[block] = block_ind_cnt;
+                    block_ind_cnt ++;
+                }
+            }
+        }   
+
+    /// setting up requests
+    int num_partners = target_ranks.size();
+    std::vector<std::vector<int>> requests(num_partners); // IDs of target sites in neighboring block
+    for (int j = 0; j<cols; j++){
+            for (int k = 0; k<partition.z[j]; k++){ 
+                int block  = partition.getNbrBlock(j, k);
+                int nbr_id = partition.getNbrID(j, k);
+                requests[block_ind[block]].push_back(nbr_id);
+            }
+        }
+    MatrixExchanger<int> exchanger(world_rank, world_size);
+    exchanger.initialize_connections(m, target_ranks, requests, loader.local_ind);
+    /// End of communication initialization
     
     ProgressBar bar(mc_steps, (world_rank == 0));
 
@@ -278,115 +307,79 @@ int main(int argc, char* argv[]) {
         double prob = std::exp(-dF/kT);
         double p = uniform(gen);
 
-        std::vector<int> dN_tot(n_types, 0);
-        std::vector<int> dN(n_types, 0);
+        bool global_acceptance_flag = false;
         if (is_vcsgc){
+            std::vector<int> dN_tot(n_types, 0);
+            std::vector<int> dN(n_types, 0);
             if (p<prob){
                 dN[type_new] = +1;
                 dN[type_old] = -1;
             }
             MPI_Allreduce(dN.data(), dN_tot.data(), n_types, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        }
 
-        bool acceptance_flag = false;
-        
-        if (is_vcsgc){
             double dF_glob = 0;
             for (int k = 1; k<n_types; k++){
                 dF_glob += kappa*dN_tot[k]*(dN_tot[k] + 2*(number_of_solutes[k]-number_of_solutes_target[k]))/natoms;
             }
             double prob_glob = std::exp(-dF_glob/kT);
             double p_glob = uniform(gen_shared);
-            acceptance_flag = (p_glob<prob_glob);
+            global_acceptance_flag = (p_glob<prob_glob);
+            if (global_acceptance_flag){
+                for (int k = 0; k<n_types; k++){
+                    number_of_solutes[k] += dN_tot[k];
+                }
+            }
         }
         else {
-            acceptance_flag = true;
+            global_acceptance_flag = true;
         }
 
-        if (p<prob && acceptance_flag){
+        if (p<prob && global_acceptance_flag){
             m(i, j) = type_new;
-            accepted_loc ++;
+            accepted ++;
             number_of_solutes_loc[type_new]++;
             number_of_solutes_loc[type_old]--;
             energy_loc += dE;
         }
-        
-        std::vector<int> target_ranks;
-        std::unordered_map<int, int> block_ind;
-        std::unordered_set<int> seen;
-        int map_cnt = 0; 
-        for (int j = 0; j<cols; j++){
-                for (int k = 0; k<partition.z[j]; k++){ // over interblock bonds of j
-                    // найдем нужный rank=block and nbr_id
-                    int block  = partition.getNbrBlock(j, k);
-                    if (!seen.count(block)) {
-                        seen.insert(block);
-                        target_ranks.push_back(block-1);
-                        block_ind[block] = map_cnt;
-                        map_cnt ++;
-                    }
-                }
-            }
-        int num_partners = target_ranks.size();
-        std::vector<std::vector<int>> my_requests(num_partners);
-        for (int j = 0; j<cols; j++){
-                for (int k = 0; k<partition.z[j]; k++){ 
-                    int block  = partition.getNbrBlock(j, k);
-                    int nbr_id = partition.getNbrID(j, k);
-                    my_requests[block_ind[block]].push_back(nbr_id);
-                }
-            }
-        MatrixExchanger<int> exchanger(world_rank, world_size);
-        exchanger.initialize_connections(m, target_ranks, my_requests, loader.local_ind);
 
-        if (acceptance_flag){
-            for (int k = 0; k<n_types; k++){
-                number_of_solutes[k] += dN_tot[k];
-            }
-        }
+        /// syncronization of occupation matrix (m)
+        exchanger.exchange_step(m); // send to buffers
 
-        exchanger.exchange_step(m);
-
-        // 3. Читаем полученные столбцы целиком
         for (int p = 0; p < num_partners; ++p) {
-            // Сколько столбцов мы просили у p-го соседа?
-            int num_requested_cols = my_requests[p].size();
-
+            int num_requested_cols = requests[p].size();
             for (int k = 0; k < num_requested_cols; ++k) {
-                int original_key_id = my_requests[p][k]; 
-                // Получаем прямой указатель на k-й запрошенный столбец от p-го соседа
+                int requested_id = requests[p][k]; 
                 const int* column_data = exchanger.get_received_column(p, k);
-                
-                // Теперь column_data — это обычный непрерывный массив
                 for (int r = 0; r < rows; ++r) {
-                    int val = column_data[r]; // Это элемент строки 'r' чужого столбца
-                    // Использовать val...
-                    m(r, loader.local_ind[original_key_id]) = val;
+                    m(r, loader.local_ind[requested_id]) = column_data[r];
                 }
             }
         }
 
+        // syncronization of thermo
         if (step%print_each==0 || step == mc_steps)
         {
-                    MPI_Reduce(
-                        &accepted_loc,      
-                        &accepted,        
-                        1,
-                        MPI_INT,
-                        MPI_SUM,
-                        0,
-                        MPI_COMM_WORLD
-                    );
+            if (!is_vcsgc){
+                MPI_Reduce(
+                    number_of_solutes_loc.data(), 
+                    number_of_solutes.data(), 
+                    n_types, 
+                    MPI_INT, 
+                    MPI_SUM, 
+                    0, // root
+                    MPI_COMM_WORLD
+                );
+            }
 
-                    MPI_Reduce(
-                        &energy_loc,      
-                        &energy,        
-                        1,
-                        MPI_DOUBLE,
-                        MPI_SUM,
-                        0,
-                        MPI_COMM_WORLD
-                    );
+            MPI_Reduce(
+                &energy_loc,      
+                &energy,        
+                1,
+                MPI_DOUBLE,
+                MPI_SUM,
+                0,
+                MPI_COMM_WORLD
+            );
 
             if (world_rank == 0) 
             {
@@ -401,7 +394,7 @@ int main(int argc, char* argv[]) {
                 }
                 out << std::setw(15) << std::fixed << std::setprecision(4) << energy << std::endl;
             }
-            accepted_loc = 0;
+            accepted = 0;
         }
 
         if (step%dump_each==0)
@@ -442,6 +435,7 @@ int main(int argc, char* argv[]) {
         out.close();
     }
 
+    exchanger.mpi_finalize();
     MPI_Finalize();
 
     return 0;
