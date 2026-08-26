@@ -34,7 +34,7 @@ int main(int argc, char* argv[]) {
         loader.loadAndDistribute("new_neighbors.txt", "new_eint.txt", partition.partition, partition.nbrs);
 
     } catch (const std::exception& e) {
-        std::cerr << "Rank " << world_rank << " поймал исключение: " << e.what() << std::endl;
+        std::cerr << "world_rank " << world_rank << " поймал исключение: " << e.what() << std::endl;
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
     
@@ -176,7 +176,7 @@ int main(int argc, char* argv[]) {
     // occupation matrix
     Matrix<double> x_glob;
     if (world_rank==0){
-        x_glob = Matrix(n_types, cols, 0.0); 
+        x_glob = Matrix(loader.total_site_types, n_types, 0.0); 
     }
     Matrix<int> m = Matrix(rows, cols_ghost, types[0]); 
     // energy matrix
@@ -253,7 +253,7 @@ int main(int argc, char* argv[]) {
     int block_ind_cnt = 0; 
     for (int j = 0; j<cols; j++){
             for (int k = 0; k<partition.z[j]; k++){ // over interblock bonds of j
-                // найдем нужный rank=block and nbr_id
+                // найдем нужный world_rank=block and nbr_id
                 int block  = partition.getNbrBlock(j, k);
                 if (block_ind.find(block) == block_ind.end()) { // there is no key "block" in dict (first appearance)
                     target_ranks.push_back(block-1);
@@ -399,35 +399,72 @@ int main(int argc, char* argv[]) {
 
         if (step%dump_each==0)
         {
-            // TODO переписать со сбора по строкам (REDUCE) на сбор столбцов (GATHER)
-
-            /* Matrix<double> mr(n_types, cols, 0.0); 
-            for (int ii = 0; ii<rows; ii++){
-                for (int jj = 0; jj<cols; jj++){
-                    mr(m(ii, jj), jj)++;
+            Matrix<double> x_loc(cols, n_types, 0.0); 
+            for (int jj = 0; jj<cols; jj++){
+                for (int ii = 0; ii<rows; ii++){
+                    x_loc(jj, m(ii, jj)) ++;
+                }
+                for (int k=0; k<n_types; k++){
+                    x_loc(jj, k) /= rows;
                 }
             }
 
-            MPI_Reduce(
-                mr.data(),      
-                x_glob.data(),        
-                cols*n_types,
-                MPI_DOUBLE,
-                MPI_SUM,
-                0,
-                MPI_COMM_WORLD
-            );
+            // Буферы для Root-процесса
+            std::vector<int> recv_counts_data, disp_data;
+            std::vector<int> recv_counts_idx, disp_idx;
+            std::vector<double> temp_x_glob;
+            std::vector<int> global_indices;
 
-            if (world_rank == 0) 
-            {
-                for (int k = 0; k<n_types; k++){
-                    for (int p = 0; p<cols; p++){
-                        x_glob(k, p) = x_glob(k, p)/rows;
-                    }
+            int local_data_size = cols * n_types;
+
+            if (world_rank == 0) {
+                recv_counts_data.resize(world_size);
+                disp_data.resize(world_size);
+                recv_counts_idx.resize(world_size);
+                disp_idx.resize(world_size);
+            }
+
+            // Собираем метаданные размеров
+            MPI_Gather(&cols, 1, MPI_INT, recv_counts_idx.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+            MPI_Gather(&local_data_size, 1, MPI_INT, recv_counts_data.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); // можно пересчитать без отправки через local_data_size = cols * n_types; 
+
+            if (world_rank == 0) {
+                int d_data = 0, d_idx = 0;
+                for (int i = 0; i < world_size; ++i) {
+                    disp_data[i] = d_data;
+                    d_data += recv_counts_data[i];
+                    disp_idx[i] = d_idx;
+                    d_idx += recv_counts_idx[i];
                 }
-                // dump
-                x_glob.save_to_text(dump_dir+"/x_"+std::to_string(step)+".txt");
-            }*/
+                
+                // Выделяем память под итоговые векторы
+                global_indices.resize(d_idx);
+                temp_x_glob.resize(d_data); 
+                assert(d_data == loader.total_site_types*n_types);// (number of elements in x_glob)
+            }
+
+            // 1. Собираем индексы (передаем .data())
+            MPI_Gatherv(partition.partition.data(), cols, MPI_INT,
+                        global_indices.data(), recv_counts_idx.data(), disp_idx.data(), MPI_INT,
+                        0, MPI_COMM_WORLD);
+
+            // 2. Собираем данные
+            MPI_Gatherv(x_loc.data(), local_data_size, MPI_DOUBLE,
+                        temp_x_glob.data(), recv_counts_data.data(), disp_data.data(), MPI_DOUBLE,
+                        0, MPI_COMM_WORLD);
+
+            // 3. Восстановление порядка
+            if (world_rank == 0) {
+                for (size_t i = 0; i < global_indices.size(); ++i) {
+                    int target_row = global_indices[i]-1;
+                    
+                    std::copy(temp_x_glob.begin() + i * n_types, 
+                            temp_x_glob.begin() + (i + 1) * n_types, 
+                            x_glob.begin() + target_row * n_types);
+                }
+            // dump
+            x_glob.save_to_text(dump_dir+"/x_"+std::to_string(step)+".txt");
+            }
         } 
     }
 

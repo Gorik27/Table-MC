@@ -5,7 +5,7 @@ from natsort import natsorted
 from tqdm import tqdm
 
 
-rows = 100
+rows = 10
 
 df = np.loadtxt('es.txt', skiprows=1)
 e0 = df[:,1]-df[:,0]
@@ -18,13 +18,16 @@ w = w_table.sum(axis=0)
 
 ls = natsorted(glob("dump/x_*.txt"))
 N = len(ls)
-n0 = int(round(N*0.8))
+if N>1:
+    n0 = int(round(N*0.8))
+else:
+    n0 = 0
 m0 = np.loadtxt(ls[-1], skiprows=1)
-x = np.zeros(m0.shape[1])
+x = np.zeros(m0.shape[0])
 cnt = 0
 
 for file in tqdm(ls[n0::10]):
-    xi = np.loadtxt(file, skiprows=1)[1]
+    xi = np.loadtxt(file, skiprows=1)[:, 1]
     x += xi
     cnt += 1
 

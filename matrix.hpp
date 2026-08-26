@@ -62,6 +62,18 @@ public:
     int rows() const { return rows_; }
     int cols() const { return cols_; }
     size_t size() const { return data_.size(); }
+    typename std::vector<T>::iterator begin() { 
+        return data_.begin(); 
+    }
+    typename std::vector<T>::const_iterator begin() const { 
+        return data_.begin(); 
+    }
+    typename std::vector<T>::iterator end() { 
+        return data_.end(); 
+    }
+    typename std::vector<T>::const_iterator end() const { 
+        return data_.end(); 
+    }
 
     // Работа с файлами (Текстовый формат)
     bool save_to_text(const std::string& filename) const {
