@@ -328,13 +328,12 @@ int main(int argc, char* argv[]) {
                 }
             }
         int num_partners = target_ranks.size();
-        std::vector<std::vector<InitRequest>> my_requests(num_partners);
+        std::vector<std::vector<int>> my_requests(num_partners);
         for (int j = 0; j<cols; j++){
                 for (int k = 0; k<partition.z[j]; k++){ 
                     int block  = partition.getNbrBlock(j, k);
                     int nbr_id = partition.getNbrID(j, k);
-                    InitRequest req = {nbr_id};
-                    my_requests[block_ind[block]].push_back(req);
+                    my_requests[block_ind[block]].push_back(nbr_id);
                 }
             }
         MatrixExchanger<int> exchanger(world_rank, world_size);
@@ -354,13 +353,12 @@ int main(int argc, char* argv[]) {
             int num_requested_cols = my_requests[p].size();
 
             for (int k = 0; k < num_requested_cols; ++k) {
-                int original_key_id = my_requests[p][k].key_id; 
-                int col_size = 0;
+                int original_key_id = my_requests[p][k]; 
                 // Получаем прямой указатель на k-й запрошенный столбец от p-го соседа
-                const int* column_data = exchanger.get_received_column(p, k, col_size);
+                const int* column_data = exchanger.get_received_column(p, k);
                 
-                // Теперь column_data — это обычный непрерывный массив размера col_size
-                for (int r = 0; r < col_size; ++r) {
+                // Теперь column_data — это обычный непрерывный массив
+                for (int r = 0; r < rows; ++r) {
                     int val = column_data[r]; // Это элемент строки 'r' чужого столбца
                     // Использовать val...
                     m(r, loader.local_ind[original_key_id]) = val;
