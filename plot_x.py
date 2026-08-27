@@ -6,15 +6,27 @@ from tqdm import tqdm
 
 
 rows = 10
+kT = 3
+mu_mc = 45
 
-df = np.loadtxt('es.txt', skiprows=1)
+
+mu = -mu_mc # in MC codes chemical potential is often inverted to classical definition (mu = dG/dX)
+"""
+READING
+"""
+df = np.loadtxt('new_es.txt', skiprows=1)
 e0 = df[:,1]-df[:,0]
 
-df = np.loadtxt('modified_spectrum.txt', skiprows=1)
+df = np.loadtxt('modified_spectrum.txt')
 em = np.repeat(df[:, 0], df[:,1].astype(int))
 
-w_table = np.loadtxt('w11.txt', skiprows=1)
-w = w_table.sum(axis=0)
+w = np.zeros(len(e0))
+with open('new_eint.txt') as f:
+    for i, line in enumerate(f.readlines()[1:]):
+        args = line.replace(' \n', '').replace('\n', '').split(' ')
+        ws = list(map(float, args[1:]))
+        w[i] = np.sum(ws)
+
 
 ls = natsorted(glob("dump/x_*.txt"))
 N = len(ls)
@@ -33,6 +45,10 @@ for file in tqdm(ls[n0::10]):
 
 x = x/cnt
 
+"""
+ORDERING (SORT)
+"""
+
 srt = np.argsort(x)[::-1]
 xmc = x[srt]
 
@@ -44,11 +60,9 @@ srtm = np.argsort(em)
 xsm = x[srtm]
 esm = em[srtm]
 
-
-
-
-kT = 3
-mu = -60
+"""
+CALCULATIONS
+"""
 x0_fermi = 1/(1+np.exp((es0-mu)/kT))
 
 xgb = x0_fermi.mean()
@@ -67,6 +81,10 @@ esr = er[srtr]
 xr_fermi = 1/(1+np.exp((esr-mu)/kT))
 
 xm_fermi = 1/(1+np.exp((esm-mu)/kT))
+
+"""
+OUTPUT
+"""
 
 print('mean x_fermi: ', x0_fermi.mean())
 print('mean x_r_fermi: ', xr_fermi.mean())

@@ -2,11 +2,12 @@ import numpy as np
 from copy import deepcopy as dc
 
 eV2kJmol = 96.485
+suffix = ''
 
 ids = []
 nbrs = []
 
-with open("neighbors.txt") as f:
+with open(f"neighbors{suffix}.txt") as f:
     cnt = 0
     for line in f:
         if cnt == 0:
@@ -20,7 +21,7 @@ with open("neighbors.txt") as f:
 nbrs_c = dc(nbrs)
 ids_arr = np.array(ids)
 
-df = np.loadtxt("GBEs.txt")
+df = np.loadtxt(f"GBEs{suffix}.txt")
 ids_e = df[:, 0]
 e1s = df[:, 1]
 df = np.loadtxt("bulkEs.txt")
@@ -49,7 +50,7 @@ ids_eint = []
 eint = []
 Epure = np.loadtxt("pureE.txt")
 
-with open("GBEs_int.txt") as f:
+with open(f"GBEs_int{suffix}.txt") as f:
     cnt = 0
     for line in f:
         if cnt == 0:
@@ -103,11 +104,11 @@ for i in range(len(ids)):
         out_e += "\n"
         out_eint += "\n"    
 
-with open("new_neighbors.txt", 'w') as f:
+with open(f"new_neighbors{suffix}.txt", 'w') as f:
     f.write(out)
 
-with open("new_es.txt", 'w') as f:
+with open(f"new_es{suffix}.txt", 'w') as f:
     f.write(out_e)
 
-with open("new_eint.txt", 'w') as f:
+with open(f"new_eint{suffix}.txt", 'w') as f:
     f.write(out_eint)

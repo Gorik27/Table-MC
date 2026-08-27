@@ -48,7 +48,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "world_rank " << world_rank << " поймал исключение: " << e.what() << std::endl;
         MPI_Abort(MPI_COMM_WORLD, 1);
     }
-    
+
     int cols = partition.nsites;
     int cols_ghost = loader.local_ind.size();
     int rows;
@@ -164,13 +164,25 @@ int main(int argc, char* argv[]) {
         std::cout << "       kappa              : " << kappa << std::endl;
         std::cout << "       target c           : " << c_str << std::endl;
         }
-        std::cout << "===================================\n" << std::endl;
+        std::cout << "===================================\n\n" << std::endl;
     }
 
     
     std::uniform_int_distribution<int> uniform_row(0, rows-1);
 
     int natoms = rows*loader.total_site_types;
+    
+    int natoms_check;
+    MPI_Allreduce(&natoms, &natoms_check, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (world_rank == 0){
+        if (natoms != natoms_check){
+            std::cerr << "[BUG] natoms differs across ranks!" << std::endl;
+        }
+        else {
+            std::cout << "natoms: " << natoms << std::endl;
+        }
+    }
+
 
     std::vector<int> number_of_solutes_target(n_types, 0);
     double c0 = 1.0;
@@ -216,10 +228,12 @@ int main(int argc, char* argv[]) {
     } 
 
     double energy;
+    int accepted;
     if (world_rank==0){
         energy = 0.0;
+        accepted = 0;
     }
-    int accepted = 0;
+    int accepted_loc = 0;
     double energy_loc = 0.0;
 
     std::vector<int> number_of_solutes(n_types, 0);
@@ -227,6 +241,22 @@ int main(int argc, char* argv[]) {
     
     std::vector<int> number_of_solutes_loc(n_types, 0);
     number_of_solutes_loc[0] = rows*cols;
+
+    int cols_tot = 0;
+    MPI_Allreduce(&cols, &cols_tot, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+    if (loader.total_site_types!=cols_tot){
+        std::cerr << "[BUG]: Sum of number of cols: " << cols_tot << " is not equal to total number of cols: " << loader.total_site_types << std::endl;
+        throw std::runtime_error("loader.total_site_types!=cols_tot");
+    }
+
+    if (is_vcsgc){
+        std::vector<int> number_of_solutes_test(n_types, 0);
+        MPI_Allreduce(number_of_solutes_loc.data(), number_of_solutes_test.data(), n_types, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        for (int k = 0; k<n_types; k++){
+            assert(2*number_of_solutes_test[k]==2*number_of_solutes[k]);//init
+        }
+    }
 
     std::ofstream out;
     std::string dump_dir = "dump";
@@ -321,8 +351,8 @@ int main(int argc, char* argv[]) {
         if (is_vcsgc){
             std::vector<int> dN_tot(n_types, 0);
             std::vector<int> dN(n_types, 0);
-            if (p<prob){
-                dN[type_new] = +1;
+            if (p<=prob){
+                dN[type_new] = 1;
                 dN[type_old] = -1;
             }
             MPI_Allreduce(dN.data(), dN_tot.data(), n_types, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -333,7 +363,7 @@ int main(int argc, char* argv[]) {
             }
             double prob_glob = std::exp(-dF_glob/kT);
             double p_glob = uniform(gen_shared);
-            global_acceptance_flag = (p_glob<prob_glob);
+            global_acceptance_flag = (p_glob<=prob_glob);
             if (global_acceptance_flag){
                 for (int k = 0; k<n_types; k++){
                     number_of_solutes[k] += dN_tot[k];
@@ -344,14 +374,21 @@ int main(int argc, char* argv[]) {
             global_acceptance_flag = true;
         }
 
-        if (p<prob && global_acceptance_flag){
+        if (p<=prob && global_acceptance_flag){
             m(i, j) = type_new;
-            accepted ++;
+            accepted_loc ++;
             number_of_solutes_loc[type_new]++;
             number_of_solutes_loc[type_old]--;
             energy_loc += dE;
         }
 
+        if (is_vcsgc){
+            std::vector<int> number_of_solutes_test(n_types, 0);
+            MPI_Allreduce(number_of_solutes_loc.data(), number_of_solutes_test.data(), n_types, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            for (int k = 0; k<n_types; k++){
+                assert(number_of_solutes_test[k]==number_of_solutes[k]);
+            }
+        }
         /// syncronization of occupation matrix (m)
         exchanger.exchange_step(m); // send to buffers
 
@@ -361,7 +398,9 @@ int main(int argc, char* argv[]) {
                 int requested_id = requests[p][k]; 
                 const int* column_data = exchanger.get_received_column(p, k);
                 for (int r = 0; r < rows; ++r) {
-                    m(r, loader.local_ind[requested_id]) = column_data[r];
+                    int target_col = loader.local_ind[requested_id];
+                    assert(target_col >= cols && "ghost write hits a REAL (owned) column!");
+                    m(r, target_col) = column_data[r];
                 }
             }
         }
@@ -380,6 +419,16 @@ int main(int argc, char* argv[]) {
                     MPI_COMM_WORLD
                 );
             }
+
+            MPI_Reduce(
+                &accepted_loc,      
+                &accepted,        
+                1,
+                MPI_INT,
+                MPI_SUM,
+                0,
+                MPI_COMM_WORLD
+            );
 
             MPI_Reduce(
                 &energy_loc,      
@@ -405,6 +454,7 @@ int main(int argc, char* argv[]) {
                 out << std::setw(15) << std::fixed << std::setprecision(4) << energy << std::endl;
             }
             accepted = 0;
+            accepted_loc = 0;
         }
 
         if (step%dump_each==0)

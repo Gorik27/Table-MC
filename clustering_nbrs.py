@@ -6,8 +6,9 @@ import os
 import networkx as nx
 import nxmetis
 
-
-file_path = "new_neighbors.txt"
+suffix = ''
+file_path = f"new_neighbors{suffix}.txt"
+n_clusters = 20  # Ваше количество блоков
 
 # Инициализируем списки для координат связей (строка, колонка)
 sources = []
@@ -44,7 +45,7 @@ print("-" * 50)
 
 # --- НАСТРОЙКА И ЗАПУСК КЛАСТЕРИЗАЦИИ ---
 
-n_clusters = 20  # Ваше количество блоков
+
 
 # Превращаем вашу разреженную матрицу в граф NetworkX
 G = nx.from_scipy_sparse_array(sparse_matrix)

@@ -115,6 +115,8 @@ public:
             }
         }        
 
+        MPI_Bcast(&total_site_types, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
         if (world_size == 1) {
             local_count = total_rows;
 
