@@ -14,7 +14,7 @@ sources = []
 targets = []
 
 with open(file_path) as f:
-    for line in f.readlines():
+    for line in f.readlines()[1:]:
         args = line.replace(' \n', '').replace('\n', '').split(' ')
         id_c = int(args[0])
         ids_n = list(map(int, args[1:]))

@@ -1,6 +1,7 @@
 import numpy as np
 from copy import deepcopy as dc
 
+eV2kJmol = 96.485
 
 ids = []
 nbrs = []
@@ -19,8 +20,35 @@ with open("neighbors.txt") as f:
 nbrs_c = dc(nbrs)
 ids_arr = np.array(ids)
 
+df = np.loadtxt("GBEs.txt")
+ids_e = df[:, 0]
+e1s = df[:, 1]
+df = np.loadtxt("bulkEs.txt")
+if len(df.shape)==1:
+    e0 = df[1]
+else:
+    e0 = np.mean(df[:, 1])
+
+es = (e1s-e0)*eV2kJmol
+
+es_srt = []
+ids_e_srt = []
+
+for i in range(len(es)):
+    i0 = np.where(ids_e==ids_arr[i])[0][0]
+    es_srt.append(es[i0])
+    ids_e_srt.append(ids_e[i0])
+
+ids_e = np.array(ids_e_srt)
+es = np.array(es_srt)
+
+assert np.all(ids_arr==ids_e) # проверяем, что порядок индексов в файле с энергией и в файле с соседями совпадает
+
+
 ids_eint = []
 eint = []
+Epure = np.loadtxt("pureE.txt")
+
 with open("GBEs_int.txt") as f:
     cnt = 0
     for line in f:
@@ -39,6 +67,7 @@ for i in range(len(nbrs_c)):
     for j in range(len(nbrs_c[i])):
         e = nbrs_c[i][j]
         i1 = np.where(ids_arr==e)[0][0]
+        eint[i][j] = (eint[i][j]+Epure)*eV2kJmol-(es[i]+es[i1]+2*e0*eV2kJmol)
         n0 = len(nbrs[i1])
         nbrs[i1].append(ids[i])
         if len(eint[i1])==n0:
@@ -46,27 +75,9 @@ for i in range(len(nbrs_c)):
         else:
             eint[i1][n0] = eint[i][j]
 
-
-srt = np.argsort(ids)
-ids_arr = np.array(ids)[srt]
-nbrs = np.array(nbrs, dtype=object)[srt]
-
-srt = np.argsort(ids_eint)
-ids_eint = np.array(ids_eint)[srt]
-eint = np.array(eint, dtype=object)[srt]
+ids_eint = np.array(ids_eint)
 
 assert np.all(ids_arr==ids_eint) # проверяем, что порядок индексов в файле с энергией и в файле с соседями совпадает
-
-df = np.loadtxt("GBEs.txt")
-ids_e = df[:, 0]
-es = df[:, 1]
-
-srt = np.argsort(ids_e)
-ids_e = np.array(ids_e)[srt]
-es = np.array(es)[srt]
-
-assert np.all(ids_arr==ids_e) # проверяем, что порядок индексов в файле с энергией и в файле с соседями совпадает
-
 """
 создаем новые индексы от 1 до N_sites
 """
@@ -76,7 +87,7 @@ new_nbrs = []
 
 out = 'central atom. neighbor_ids\n'
 out_eint = '# id [Es]\n'
-out_e = '# id E\n'
+out_e = f'{len(ids)} 2\n'
 for i in range(len(ids)):
     new_nbr = []
     out += f"{i+1}"

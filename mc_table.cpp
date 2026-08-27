@@ -17,9 +17,20 @@
 #include <algorithm>
 #include "Communicator.h"
 
+#include <csignal>
+#include <unistd.h>
+void signal_handler(int signal) {
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    std::cerr << "!!! Процесс " << rank << " упал с сигналом " << signal << " (PID: " << getpid() << ")" << std::endl;
+    exit(signal);
+}
+
 
 int main(int argc, char* argv[]) {
     MPI_Init(&argc, &argv);
+    std::signal(SIGSEGV, signal_handler);
+    std::signal(SIGABRT, signal_handler);
     int world_rank;
     int world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
@@ -181,9 +192,12 @@ int main(int argc, char* argv[]) {
     Matrix<int> m = Matrix(rows, cols_ghost, types[0]); 
     // energy matrix
     Matrix<double> es = Matrix(cols, n_types, 0.0);
+    Matrix<double> es_load;
+    es_load.load_from_text("new_es.txt");
     for (int i = 0; i<cols; ++i){
         for (int j = 1; j<n_types; ++j){
-            es(i, j) = dist(gen_shared)*std_energy[j]+mean_energy[j]; // TODO: load from file
+            es(i, j) = es_load(partition.partition[i]-1, 1); // TODO: сделать поддержку нескольких сортов атомов
+            //es(i, j) = dist(gen_shared)*std_energy[j]+mean_energy[j]; 
         }
     }
     // interaction matrix
@@ -200,10 +214,6 @@ int main(int argc, char* argv[]) {
             
         }
     } 
-        
-    if (world_rank==0){
-        es.save_to_text("es.txt"); // TODO: убрать
-    }
 
     double energy;
     if (world_rank==0){
