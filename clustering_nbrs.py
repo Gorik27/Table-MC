@@ -3,12 +3,20 @@ import scipy.sparse as sp
 import pandas as pd
 from sklearn.cluster import SpectralClustering
 import os
+import shutil
 import networkx as nx
 import nxmetis
+import argparse
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("n", type=int, help='number of clusters (equal to number of CPU precesses)')
+args = parser.parse_args()
+
 
 suffix = ''
 file_path = f"new_neighbors{suffix}.txt"
-n_clusters = 20  # Ваше количество блоков
+n_clusters = args.n
 
 # Инициализируем списки для координат связей (строка, колонка)
 sources = []
@@ -97,7 +105,10 @@ def find_boundary_nodes_sparse(sparse_matrix, labels):
 
     
 partition_path = 'partitions'
+if os.path.exists(partition_path):
+    shutil.rmtree(partition_path)
 os.makedirs(partition_path, exist_ok=True)
+
 # Получаем массивы межблочных связей с помощью новой функции
 boundary_sources, boundary_targets = find_boundary_nodes_sparse(sparse_matrix, labels)
 

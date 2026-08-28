@@ -5,7 +5,6 @@ from natsort import natsorted
 from tqdm import tqdm
 
 
-rows = 10
 kT = 3
 mu_mc = 45
 
@@ -15,7 +14,7 @@ mu = -mu_mc # in MC codes chemical potential is often inverted to classical defi
 READING
 """
 df = np.loadtxt('new_es.txt', skiprows=1)
-e0 = df[:,1]-df[:,0]
+e0 = df[:,1]
 
 df = np.loadtxt('modified_spectrum.txt')
 em = np.repeat(df[:, 0], df[:,1].astype(int))
@@ -50,7 +49,7 @@ ORDERING (SORT)
 """
 
 srt = np.argsort(x)[::-1]
-xmc = x[srt]
+xmc = x#[srt]
 
 srt0 = np.argsort(e0)
 xs0 = x[srt0]
@@ -93,7 +92,7 @@ print('mean x_mc   : ', x.mean())
 
 plt.figure(dpi=300)
 plt.subplot(131)
-plt.plot(es0, xmc, color='black', label='MC')
+plt.plot(es0, xmc[srt0], color='black', label='MC')
 plt.plot(es0, x0_fermi, color='red', label='fermi')
 plt.xlabel('energy')
 plt.ylabel('X')
@@ -102,7 +101,7 @@ plt.gca().set_box_aspect(1)
 plt.title('original spectrum')
 
 plt.subplot(132)
-plt.plot(esr, xmc, color='black', label='MC')
+plt.plot(esr, xmc[srtr], color='black', label='MC')
 plt.plot(esr, xr_fermi, color='red', label='fermi')
 plt.xlabel('energy')
 plt.ylabel('X')
@@ -111,7 +110,7 @@ plt.gca().set_box_aspect(1)
 plt.title('NCRS')
 
 plt.subplot(133)
-plt.plot(esm, xmc, color='black', label='MC')
+plt.plot(esm, xmc[srtm], color='black', label='MC')
 plt.plot(esm, xm_fermi, color='red', label='fermi')
 
 
@@ -126,8 +125,10 @@ plt.title('modified spectrum')
 plt.gcf().tight_layout()
 plt.savefig("plot_x.png")
 
-print("\noriginal energy:", np.sum(es0*x0_fermi)*rows)
-print("NCRS energy:", np.sum(esr*xr_fermi)*rows)
-print("mod energy:", np.sum(esm*xm_fermi)*rows)
+print("\noriginal energy:", np.mean(es0*x0_fermi))
+print("NCRS energy:", np.mean(esr*xr_fermi))
+print("mod energy:", np.mean(esm*xm_fermi))
 
-print("mod energy per solute atom:", np.sum(esm*xm_fermi)*rows/xm_fermi.mean())
+print("\noriginal energy per solute atom:", np.mean(es0*x0_fermi)/x0_fermi.mean())
+print("NCRS energy per solute atom:", np.mean(esr*xr_fermi)/xr_fermi.mean())
+print("mod energy per solute atom:", np.mean(esm*xm_fermi)/xm_fermi.mean())

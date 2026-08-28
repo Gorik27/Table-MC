@@ -16,9 +16,11 @@
 #include "PartitionLoader.h"
 #include <algorithm>
 #include "Communicator.h"
-
+#include <cstdlib>
 #include <csignal>
 #include <unistd.h>
+
+
 void signal_handler(int signal) {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -35,6 +37,31 @@ int main(int argc, char* argv[]) {
     int world_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    int python_status = 0;
+    if (world_rank==0){
+        const char* env_p = std::getenv("MC_PYTHON_PATH");
+        std::string python_path;
+        if (env_p == nullptr) {
+            python_path = "python";
+        }
+        else {
+            python_path = env_p;
+        }
+        std::string command = "\"" + python_path + "\" clustering_nbrs.py " + std::to_string(world_size);
+        std::cout << "Running: " << command << std::endl;
+        int result = std::system(command.c_str());
+        if (result != 0) {
+            std::cerr << "ERROR in python clustering_nbrs.py (error code " << result << ")" << std::endl;
+            python_status = 1;
+        }
+    }
+    MPI_Bcast(&python_status, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    if (python_status != 0) {
+        MPI_Finalize();
+        return 2; 
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
 
     PartitionLoader partition;
     partition.load(std::format("partitions/{}.txt", world_rank+1));
@@ -104,6 +131,13 @@ int main(int argc, char* argv[]) {
         .nargs(argparse::nargs_pattern::at_least_one)
         .scan<'g', double>()
         .default_value(std::vector<double>{0.5});
+
+    double interaction_coef;
+    program.add_argument("-w")
+        .help("coefficient to multiply interactions (for debbuging)")
+        .scan<'g', double>()
+        .default_value(1.0)
+        .store_into(interaction_coef);
 
     try {
     program.parse_args(argc, argv);
@@ -220,7 +254,7 @@ int main(int argc, char* argv[]) {
             int index = I*(n_types-1)+J;
             for (int i = 0; i<cols; ++i){
                 for (int j = i+1; j<z_max; ++j){
-                    (*interactions[index])(i, j) = loader.local_eint[i, j];      // TODO: сделать поддержку нескольких сортов атомов
+                    (*interactions[index])(i, j) = loader.local_eint[i, j]*interaction_coef;      // TODO: сделать поддержку нескольких сортов атомов
                 }
             }
             
@@ -282,7 +316,7 @@ int main(int argc, char* argv[]) {
         for (int k = 0; k < n_types; k++) {
             out << std::setw(12) << ("X_" + std::to_string(k));
         }
-        out << std::setw(15) << "energy" << std::endl;
+        out << std::setw(15) << "per_site_energy" << std::endl;
     }
 
     /// Setting up MPI communication for occupation matrix (m)
@@ -451,7 +485,7 @@ int main(int argc, char* argv[]) {
                 for (int k = 0; k<n_types; k++){
                     out << std::setw(12) << std::fixed << std::setprecision(4) << static_cast<double>(number_of_solutes[k])/natoms;
                 }
-                out << std::setw(15) << std::fixed << std::setprecision(4) << energy << std::endl;
+                out << std::setw(15) << std::fixed << std::setprecision(4) << energy/natoms << std::endl;
             }
             accepted = 0;
             accepted_loc = 0;
