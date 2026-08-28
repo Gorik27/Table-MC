@@ -3,7 +3,7 @@ from matplotlib import pyplot as plt
 from copy import deepcopy as dc
 from numba import njit, prange
 import numba as nb
-from itertools import chain, repeat
+from itertools import chain, repeat, zip_longest
 
 @nb.njit(parallel=True)
 def isin(a, b):
@@ -20,19 +20,44 @@ def isin(a, b):
 eV2kJmol = 96.485
 z_max = 20
 
-df = np.loadtxt('es.txt', skiprows=1)
-Eseg = df[:,1]-df[:,0]
-ids_c = np.arange(len(Eseg))
+"""
+load data
+"""
+path = '.'
 
-w_table = np.loadtxt('w11.txt', skiprows=1)
-w = np.zeros((w_table.shape[0], z_max))
-ids_n = np.zeros((w_table.shape[0], z_max))
-for i in range(len(ids_n)):
-    nz = np.nonzero(w_table[i])[0]
-    w[i, :len(nz)] = w_table[i, nz]
-    ids_n[i, :len(nz)] = nz 
-#print(ids_n)
+data = np.loadtxt(f'{path}/new_es.txt', skiprows=1)
+data = data[data[:, 0]!=0]
+ids = data[:, 0]
+Eseg = data[:, 1]
 
+ids_n = []
+ids_c = []
+with open(f'{path}/new_neighbors.txt', 'r') as f:
+    for i, line in enumerate(f):
+        if i > 0:
+            df = line.replace('\n', '').split(' ')
+            ids_c.append(int(df[0])) 
+            ids_n.append(np.array(df[1:]).astype(int))
+
+w = []
+with open(f'{path}/new_eint.txt', 'r') as f:
+    for i, line in enumerate(f):
+        if i > 0:
+            df = line.replace('\n', '').split(' ')
+            assert ids_c[i-1] == int(df[0]) 
+            w.append(np.array(df[1:]).astype(float))
+                
+def to_np(arr):
+    padded = list(zip_longest(*arr, fillvalue=0))
+    return np.array(padded).T
+
+ids_c = np.array(ids_c)
+ids_n = to_np(ids_n)
+w = to_np(w)
+
+wavg = np.sum(w, axis = 1)
+corr = np.mean(np.corrcoef(wavg,Eseg)[0,1])
+print('correlation between wavg and Eseg: ',  corr)
 
 """
 simple ordering
@@ -68,7 +93,6 @@ def renorm(Er, wselected, Eselected, ids_c_selected, ids_n_selected):
     
 
 renorm(Er, wselected, Eselected, ids_c_selected, ids_n_selected)
-#%%
 """
 conglomerate ordering
 """
@@ -170,11 +194,29 @@ while change_flag:
         plt.ylabel('seg. energy')
         plt.title('conglomerate ordering')
         plt.savefig(f'plot_ordering.png')
-        plt.show()
+        plt.clf()
 print('done')
 #%%
 Ehist = list(chain.from_iterable(repeat(j, times = i) for i, j in zip(F_s, E_s)))
 Fhist = list(chain.from_iterable(repeat(j, times = i) for i, j in zip(F_s, F_s)))
+
+i = 0
+j = 0
+ids_hist = []
+while i<len(E_s):
+    if ids_c_s[i, j] == -1:
+        i += 1
+        j = 0
+    else:
+        ids_hist.append(ids_c_s[i, j])
+        j += 1
+        if j==ids_c_s.shape[1]:
+            j = 0
+            i += 1
+
+out = np.array([ids_hist, Ehist]).transpose()
+np.savetxt(f'es_mod.txt', out, header='id e')
+
 plt.hist(Ehist, bins=50, density=True, alpha=1, label='modified spectrum')
 plt.hist(Eseg, bins=50, alpha=0.4, density=True, label='original spectrum')
 plt.xlabel('$E_{seg}$')

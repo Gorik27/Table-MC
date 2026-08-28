@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 
 kT = 3
-mu_mc = 45
+mu_mc = 40
 
 
 mu = -mu_mc # in MC codes chemical potential is often inverted to classical definition (mu = dG/dX)
@@ -16,8 +16,13 @@ READING
 df = np.loadtxt('new_es.txt', skiprows=1)
 e0 = df[:,1]
 
-df = np.loadtxt('modified_spectrum.txt')
-em = np.repeat(df[:, 0], df[:,1].astype(int))
+df = np.loadtxt('es_mod.txt')
+ids_m = df[:, 0]
+em = df[:, 1]
+srt = np.argsort(ids_m)
+em = em[srt]
+ids_m = ids_m[srt]
+assert np.all(ids_m.astype(int)==np.arange(len(ids_m))+1)
 
 w = np.zeros(len(e0))
 with open('new_eint.txt') as f:
@@ -91,7 +96,9 @@ print('mean x_mod  : ', xm_fermi.mean())
 print('mean x_mc   : ', x.mean())
 
 plt.figure(dpi=300)
-plt.subplot(131)
+cs = np.linspace(0,1)
+
+plt.subplot(231)
 plt.plot(es0, xmc[srt0], color='black', label='MC')
 plt.plot(es0, x0_fermi, color='red', label='fermi')
 plt.xlabel('energy')
@@ -100,7 +107,14 @@ plt.legend()
 plt.gca().set_box_aspect(1)
 plt.title('original spectrum')
 
-plt.subplot(132)
+plt.subplot(234)
+plt.plot(cs, cs, linestyle='--', color='grey')
+plt.scatter(xmc[srt0], x0_fermi)
+plt.xlabel('x MC')
+plt.ylabel('x orig')
+plt.gca().set_box_aspect(1)
+
+plt.subplot(232)
 plt.plot(esr, xmc[srtr], color='black', label='MC')
 plt.plot(esr, xr_fermi, color='red', label='fermi')
 plt.xlabel('energy')
@@ -109,18 +123,28 @@ plt.legend()
 plt.gca().set_box_aspect(1)
 plt.title('NCRS')
 
-plt.subplot(133)
+plt.subplot(235)
+plt.plot(cs, cs, linestyle='--', color='grey')
+plt.scatter(xmc[srtr], xr_fermi)
+plt.xlabel('x MC')
+plt.ylabel('x NCRS')
+plt.gca().set_box_aspect(1)
+
+plt.subplot(233)
 plt.plot(esm, xmc[srtm], color='black', label='MC')
 plt.plot(esm, xm_fermi, color='red', label='fermi')
-
-
 plt.xlabel('energy')
 plt.ylabel('X')
 plt.legend()
 plt.gca().set_box_aspect(1)
 plt.title('modified spectrum')
 
-
+plt.subplot(236)
+plt.plot(cs, cs, linestyle='--', color='grey')
+plt.scatter(xmc[srtm], xm_fermi)
+plt.xlabel('x MC')
+plt.ylabel('x mod')
+plt.gca().set_box_aspect(1)
 
 plt.gcf().tight_layout()
 plt.savefig("plot_x.png")

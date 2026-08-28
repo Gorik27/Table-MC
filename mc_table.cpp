@@ -19,6 +19,10 @@
 #include <cstdlib>
 #include <csignal>
 #include <unistd.h>
+#include <numeric> 
+
+std::string dump_dir = "dump";
+std::string restart_dir = "restart";
 
 
 void signal_handler(int signal) {
@@ -94,7 +98,12 @@ int main(int argc, char* argv[]) {
 
     argparse::ArgumentParser program("mc_table");
 
-    program.add_argument("-r", "--rows")
+    program.add_argument("-r", "--restart")
+           .help("load restart files")
+           .implicit_value(true) 
+           .default_value(false);
+    
+    program.add_argument("-n", "--rows")
         .help("number of rows")
         .scan<'i', int>()
         .default_value(10)
@@ -150,6 +159,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    bool restart = program.get<bool>("--restart");
     bool is_vcsgc = program.is_used("--kappa");
 
     std::vector<double> concentrations_target = program.get<std::vector<double>>("--conc");
@@ -174,15 +184,27 @@ int main(int argc, char* argv[]) {
     }
 
     int dump_each = 10000;
+    int restart_each = 100000;
     int print_each = 100;
 
-    const std::vector<int> types = {0, 1, 2};    
+    std::vector<int> types(n_types);
+    std::iota(types.begin(), types.end(), 0); // 0 1 2 3 ... n_types - 1
 
-    std::vector<double> mean_energy = {0.0, -20.0, -10.0};
-    std::vector<double> std_energy = {0.0, 10.0, 10.0};
-
-    std::vector<double> mean_interaction = {-7.0, 0.0, -1.0, 0.0}; // BB BC CC CB
-    std::vector<double> std_interaction = {2.5, 1.0, 1.0, 1.0}; // BB BC CC CB
+    Matrix<int> m_load;
+    if (restart){
+        try {
+            m_load.load_from_text(restart_dir+"/m_"+std::to_string(world_rank+1)+".txt");
+        }
+        catch (...) {
+            std::cerr << "[ERROR]: cannot open restart file" << std::endl;
+            MPI_Finalize();
+            return 1;
+        }
+        if (rows != m_load.rows()){
+            std::cerr << "[WARNING]: Number of rows in restart file differs!!! Number from restart will be used" << std::endl;
+        }
+        rows = m_load.rows();
+    }
 
     if (world_rank==0){
         std::cout << "===================================" << std::endl;
@@ -199,6 +221,10 @@ int main(int argc, char* argv[]) {
         std::cout << "       target c           : " << c_str << std::endl;
         }
         std::cout << "===================================\n\n" << std::endl;
+        if (restart){
+        std::cout << "===== RESTART LOADED ==============" << std::endl;
+        std::cout << "===================================\n\n" << std::endl;
+        }
     }
 
     
@@ -236,6 +262,13 @@ int main(int argc, char* argv[]) {
         x_glob = Matrix(loader.total_site_types, n_types, 0.0); 
     }
     Matrix<int> m = Matrix(rows, cols_ghost, types[0]); 
+    if (restart){
+        for (int i = 0; i<rows; i++){
+            for (int j = 0; j<cols; j++){
+                m(i, j) = m_load(i, j);
+            }
+        }
+    }
     // energy matrix
     Matrix<double> es = Matrix(cols, n_types, 0.0);
     Matrix<double> es_load;
@@ -243,7 +276,6 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i<cols; ++i){
         for (int j = 1; j<n_types; ++j){
             es(i, j) = es_load(partition.partition[i]-1, 1); // TODO: сделать поддержку нескольких сортов атомов
-            //es(i, j) = dist(gen_shared)*std_energy[j]+mean_energy[j]; 
         }
     }
     // interaction matrix
@@ -261,20 +293,28 @@ int main(int argc, char* argv[]) {
         }
     } 
 
+
+    
+    double energy_loc = 0.0;
+    std::vector<int> number_of_solutes_loc(n_types, 0);
+    if (restart){
+        for (int i = 0; i<rows; i++){
+            for (int j = 0; j<cols; j++){
+                energy_loc += es(j, m(i, j));
+                number_of_solutes_loc[m(i, j)] ++;
+            }
+        }
+    }
     double energy;
+    MPI_Reduce(&energy_loc, &energy, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    std::vector<int> number_of_solutes(n_types);
+    MPI_Reduce(number_of_solutes_loc.data(), number_of_solutes.data(), n_types, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    int accepted_loc = 0;
     int accepted;
     if (world_rank==0){
-        energy = 0.0;
         accepted = 0;
     }
-    int accepted_loc = 0;
-    double energy_loc = 0.0;
-
-    std::vector<int> number_of_solutes(n_types, 0);
-    number_of_solutes[0] = natoms;
-    
-    std::vector<int> number_of_solutes_loc(n_types, 0);
-    number_of_solutes_loc[0] = rows*cols;
 
     int cols_tot = 0;
     MPI_Allreduce(&cols, &cols_tot, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -284,26 +324,22 @@ int main(int argc, char* argv[]) {
         throw std::runtime_error("loader.total_site_types!=cols_tot");
     }
 
-    if (is_vcsgc){
-        std::vector<int> number_of_solutes_test(n_types, 0);
-        MPI_Allreduce(number_of_solutes_loc.data(), number_of_solutes_test.data(), n_types, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        for (int k = 0; k<n_types; k++){
-            assert(2*number_of_solutes_test[k]==2*number_of_solutes[k]);//init
-        }
-    }
-
     std::ofstream out;
-    std::string dump_dir = "dump";
     if (world_rank==0){
-
         try {
             std::uintmax_t deleted_count = std::filesystem::remove_all(dump_dir);
         } 
         catch (const std::filesystem::filesystem_error& e) {
             std::cerr << "[ERROR]: error during removing of dump folder: " << e.what() << std::endl;
         }
-
         std::filesystem::create_directory(dump_dir); 
+        try {
+            std::uintmax_t deleted_count = std::filesystem::remove_all(restart_dir);
+        } 
+        catch (const std::filesystem::filesystem_error& e) {
+            std::cerr << "[ERROR]: error during removing of restart folder: " << e.what() << std::endl;
+        }
+        std::filesystem::create_directory(restart_dir); 
         out.open("mc_output.txt");
         if (!out.is_open()) {
             std::cerr << "[ERROR]: error during creating of mc_output.txt file:" << std::endl;
@@ -354,6 +390,22 @@ int main(int argc, char* argv[]) {
     ProgressBar bar(mc_steps, (world_rank == 0));
 
     for (int step = 1; step <= mc_steps; step++){
+        /// syncronization of occupation matrix's ghost columns (m)
+        exchanger.exchange_step(m); // send to buffers
+
+        for (int p = 0; p < num_partners; ++p) {
+            int num_requested_cols = requests[p].size();
+            for (int k = 0; k < num_requested_cols; ++k) {
+                int requested_id = requests[p][k]; 
+                const int* column_data = exchanger.get_received_column(p, k);
+                for (int r = 0; r < rows; ++r) {
+                    int target_col = loader.local_ind[requested_id];
+                    assert(target_col >= cols && "ghost write hits a REAL (owned) column!");
+                    m(r, target_col) = column_data[r];
+                }
+            }
+        }
+        /// trial step
         int i = uniform_row(gen);
         int j = uniform_col(gen);
         int type_old = m(i, j);
@@ -414,29 +466,6 @@ int main(int argc, char* argv[]) {
             number_of_solutes_loc[type_new]++;
             number_of_solutes_loc[type_old]--;
             energy_loc += dE;
-        }
-
-        if (is_vcsgc){
-            std::vector<int> number_of_solutes_test(n_types, 0);
-            MPI_Allreduce(number_of_solutes_loc.data(), number_of_solutes_test.data(), n_types, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-            for (int k = 0; k<n_types; k++){
-                assert(number_of_solutes_test[k]==number_of_solutes[k]);
-            }
-        }
-        /// syncronization of occupation matrix (m)
-        exchanger.exchange_step(m); // send to buffers
-
-        for (int p = 0; p < num_partners; ++p) {
-            int num_requested_cols = requests[p].size();
-            for (int k = 0; k < num_requested_cols; ++k) {
-                int requested_id = requests[p][k]; 
-                const int* column_data = exchanger.get_received_column(p, k);
-                for (int r = 0; r < rows; ++r) {
-                    int target_col = loader.local_ind[requested_id];
-                    assert(target_col >= cols && "ghost write hits a REAL (owned) column!");
-                    m(r, target_col) = column_data[r];
-                }
-            }
         }
 
         // syncronization of thermo
@@ -518,7 +547,6 @@ int main(int argc, char* argv[]) {
                 disp_idx.resize(world_size);
             }
 
-            // Собираем метаданные размеров
             MPI_Gather(&cols, 1, MPI_INT, recv_counts_idx.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
             MPI_Gather(&local_data_size, 1, MPI_INT, recv_counts_data.data(), 1, MPI_INT, 0, MPI_COMM_WORLD); // можно пересчитать без отправки через local_data_size = cols * n_types; 
 
@@ -531,23 +559,19 @@ int main(int argc, char* argv[]) {
                     d_idx += recv_counts_idx[i];
                 }
                 
-                // Выделяем память под итоговые векторы
                 global_indices.resize(d_idx);
                 temp_x_glob.resize(d_data); 
                 assert(d_data == loader.total_site_types*n_types);// (number of elements in x_glob)
             }
 
-            // 1. Собираем индексы (передаем .data())
             MPI_Gatherv(partition.partition.data(), cols, MPI_INT,
                         global_indices.data(), recv_counts_idx.data(), disp_idx.data(), MPI_INT,
                         0, MPI_COMM_WORLD);
 
-            // 2. Собираем данные
             MPI_Gatherv(x_loc.data(), local_data_size, MPI_DOUBLE,
                         temp_x_glob.data(), recv_counts_data.data(), disp_data.data(), MPI_DOUBLE,
                         0, MPI_COMM_WORLD);
 
-            // 3. Восстановление порядка
             if (world_rank == 0) {
                 for (size_t i = 0; i < global_indices.size(); ++i) {
                     int target_row = global_indices[i]-1;
@@ -560,7 +584,13 @@ int main(int argc, char* argv[]) {
             x_glob.save_to_text(dump_dir+"/x_"+std::to_string(step)+".txt");
             }
         } 
-    }
+
+        if (step%restart_each==0)
+        {   
+            m.save_to_text(restart_dir+"/m_"+std::to_string(world_rank+1)+".txt");
+        } 
+
+    }//end MC loop
 
     if (world_rank==0){
         out.close();
