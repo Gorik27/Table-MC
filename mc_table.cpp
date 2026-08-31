@@ -305,6 +305,9 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+    else {
+        number_of_solutes_loc[types[0]] = rows*cols;
+    }
     double energy;
     MPI_Reduce(&energy_loc, &energy, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     std::vector<int> number_of_solutes(n_types);
@@ -356,52 +359,55 @@ int main(int argc, char* argv[]) {
     }
 
     /// Setting up MPI communication for occupation matrix (m)
+    MatrixExchanger<int> exchanger(world_rank, world_size);
+    int num_partners;
+    std::vector<std::vector<int>> requests;
+    if (world_size>1){
+        /// find all blocks to communicate
+        std::vector<int> target_ranks;
+        std::unordered_map<int, int> block_ind;
+        int block_ind_cnt = 0; 
+        for (int j = 0; j<cols; j++){
+                for (int k = 0; k<partition.z[j]; k++){ // over interblock bonds of j
+                    // найдем нужный world_rank=block and nbr_id
+                    int block  = partition.getNbrBlock(j, k);
+                    if (block_ind.find(block) == block_ind.end()) { // there is no key "block" in dict (first appearance)
+                        target_ranks.push_back(block-1);
+                        block_ind[block] = block_ind_cnt;
+                        block_ind_cnt ++;
+                    }
+                }
+            }   
 
-    /// find all blocks to communicate
-    std::vector<int> target_ranks;
-    std::unordered_map<int, int> block_ind;
-    int block_ind_cnt = 0; 
-    for (int j = 0; j<cols; j++){
-            for (int k = 0; k<partition.z[j]; k++){ // over interblock bonds of j
-                // найдем нужный world_rank=block and nbr_id
-                int block  = partition.getNbrBlock(j, k);
-                if (block_ind.find(block) == block_ind.end()) { // there is no key "block" in dict (first appearance)
-                    target_ranks.push_back(block-1);
-                    block_ind[block] = block_ind_cnt;
-                    block_ind_cnt ++;
+        /// setting up requests
+        num_partners = target_ranks.size();
+        requests.resize(num_partners); // IDs of target sites in neighboring block
+        for (int j = 0; j<cols; j++){
+                for (int k = 0; k<partition.z[j]; k++){ 
+                    int block  = partition.getNbrBlock(j, k);
+                    int nbr_id = partition.getNbrID(j, k);
+                    requests[block_ind[block]].push_back(nbr_id);
                 }
             }
-        }   
-
-    /// setting up requests
-    int num_partners = target_ranks.size();
-    std::vector<std::vector<int>> requests(num_partners); // IDs of target sites in neighboring block
-    for (int j = 0; j<cols; j++){
-            for (int k = 0; k<partition.z[j]; k++){ 
-                int block  = partition.getNbrBlock(j, k);
-                int nbr_id = partition.getNbrID(j, k);
-                requests[block_ind[block]].push_back(nbr_id);
-            }
-        }
-    MatrixExchanger<int> exchanger(world_rank, world_size);
-    exchanger.initialize_connections(m, target_ranks, requests, loader.local_ind);
-    /// End of communication initialization
+        exchanger.initialize_connections(m, target_ranks, requests, loader.local_ind);
+    }/// End of communication initialization
     
     ProgressBar bar(mc_steps, (world_rank == 0));
 
     for (int step = 1; step <= mc_steps; step++){
-        /// syncronization of occupation matrix's ghost columns (m)
-        exchanger.exchange_step(m); // send to buffers
+        if (world_size>1){  /// syncronization of occupation matrix's ghost columns (m)
+            exchanger.exchange_step(m); // send to buffers
 
-        for (int p = 0; p < num_partners; ++p) {
-            int num_requested_cols = requests[p].size();
-            for (int k = 0; k < num_requested_cols; ++k) {
-                int requested_id = requests[p][k]; 
-                const int* column_data = exchanger.get_received_column(p, k);
-                for (int r = 0; r < rows; ++r) {
-                    int target_col = loader.local_ind[requested_id];
-                    assert(target_col >= cols && "ghost write hits a REAL (owned) column!");
-                    m(r, target_col) = column_data[r];
+            for (int p = 0; p < num_partners; ++p) {
+                int num_requested_cols = requests[p].size();
+                for (int k = 0; k < num_requested_cols; ++k) {
+                    int requested_id = requests[p][k]; 
+                    const int* column_data = exchanger.get_received_column(p, k);
+                    for (int r = 0; r < rows; ++r) {
+                        int target_col = loader.local_ind[requested_id];
+                        assert(target_col >= cols && "ghost write hits a REAL (owned) column!");
+                        m(r, target_col) = column_data[r];
+                    }
                 }
             }
         }
@@ -596,7 +602,9 @@ int main(int argc, char* argv[]) {
         out.close();
     }
 
-    exchanger.mpi_finalize();
+    if (world_size>1){
+        exchanger.mpi_finalize();
+    }
     MPI_Finalize();
 
     return 0;
