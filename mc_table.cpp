@@ -334,6 +334,15 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i<rows; i++){
             for (int j = 0; j<cols; j++){
                 energy_loc += es(j, m(i, j));
+                if (m(i, j)>0){
+                    for (int k = 0; k<loader.local_z[j]; k++){ // over neighbors of j
+                        int jk = loader.getNbrLocalIndex(j, k); 
+                        if (m(i, jk) > 0){
+                            int index = (m(i, j)-1)*(n_types-1)+m(i, jk)-1;   
+                            energy_loc += (*interactions[index])(j, k)/2;
+                        }
+                    }
+                }
                 number_of_solutes_loc[m(i, j)] ++;
             }
         }
