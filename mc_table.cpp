@@ -20,6 +20,8 @@
 #include <csignal>
 #include <unistd.h>
 #include <numeric> 
+#include <limits.h>
+#include <filesystem>
 
 std::string dump_dir = "dump";
 std::string restart_dir = "restart";
@@ -42,6 +44,17 @@ int main(int argc, char* argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
+    char buffer[PATH_MAX];
+    // Читаем символическую ссылку на текущий исполняемый файл
+    ssize_t count = readlink("/proc/self/exe", buffer, PATH_MAX);
+    std::filesystem::path exePath;
+    std::filesystem::path exeDir;
+    if (count != -1) {
+        buffer[count] = '\0'; // Добавляем нулевой символ в конец строки
+        exePath = buffer;
+        exeDir = exePath.parent_path();
+    }
+
     int python_status = 0;
     if (world_rank==0){
         const char* env_p = std::getenv("MC_PYTHON_PATH");
@@ -52,7 +65,9 @@ int main(int argc, char* argv[]) {
         else {
             python_path = env_p;
         }
-        std::string command = "\"" + python_path + "\" clustering_nbrs.py " + std::to_string(world_size);
+        std::filesystem::path script_path = exeDir / "clustering_nbrs.py";
+        std::string command = "\"" + python_path + "\" \"" + script_path.string() + "\" " + std::to_string(world_size);
+
         std::cout << "Running: " << command << std::endl;
         int result = std::system(command.c_str());
         if (result != 0) {
@@ -83,7 +98,7 @@ int main(int argc, char* argv[]) {
     int cols = partition.nsites;
     int cols_ghost = loader.local_ind.size();
     int rows;
-    int mc_steps;
+    size_t mc_steps;
 
     unsigned int shared_seed = 0;
     std::mt19937 gen_shared(shared_seed);
@@ -111,8 +126,8 @@ int main(int argc, char* argv[]) {
 
     program.add_argument("-s", "--steps")
         .help("number of MC steps")
-        .scan<'i', int>()
-        .default_value(100)
+        .scan<'u', size_t>()
+        .default_value(size_t{100})
         .store_into(mc_steps);
 
     double kT;
@@ -148,6 +163,28 @@ int main(int argc, char* argv[]) {
         .default_value(1.0)
         .store_into(interaction_coef);
 
+
+    size_t dump_each;
+    program.add_argument("--dump-each")
+        .help("number of steps between saving dump files")
+        .scan<'u', size_t>()
+        .default_value(size_t{10000000})
+        .store_into(dump_each);
+
+    size_t restart_each;
+    program.add_argument("--restart-each")
+        .help("number of steps between saving restart files")
+        .scan<'u', size_t>()
+        .default_value(size_t{10000000})
+        .store_into(restart_each);
+
+    size_t print_each;
+    program.add_argument("--print-each")
+        .help("number of steps between printing termo")
+        .scan<'u', size_t>()
+        .default_value(size_t{10000})
+        .store_into(print_each);
+
     try {
     program.parse_args(argc, argv);
     }
@@ -182,10 +219,6 @@ int main(int argc, char* argv[]) {
         if (s.back() == '.') s.pop_back();                       // Удаляем точку, если число целое
         mu_str += s + " ";
     }
-
-    int dump_each = 10000;
-    int restart_each = 100000;
-    int print_each = 100;
 
     std::vector<int> types(n_types);
     std::iota(types.begin(), types.end(), 0); // 0 1 2 3 ... n_types - 1
@@ -285,7 +318,7 @@ int main(int argc, char* argv[]) {
             interactions.push_back(std::make_unique<Matrix<double>>(cols, z_max, 0.0));
             int index = I*(n_types-1)+J;
             for (int i = 0; i<cols; ++i){
-                for (int j = i+1; j<z_max; ++j){
+                for (int j = 0; j<z_max; ++j){
                     (*interactions[index])(i, j) = loader.local_eint[i, j]*interaction_coef;      // TODO: сделать поддержку нескольких сортов атомов
                 }
             }
@@ -394,7 +427,7 @@ int main(int argc, char* argv[]) {
     
     ProgressBar bar(mc_steps, (world_rank == 0));
 
-    for (int step = 1; step <= mc_steps; step++){
+    for (size_t step = 1; step <= mc_steps; step++){
         if (world_size>1){  /// syncronization of occupation matrix's ghost columns (m)
             exchanger.exchange_step(m); // send to buffers
 
@@ -421,19 +454,25 @@ int main(int argc, char* argv[]) {
         }
 
         double dE = es(j, type_new) - es(j, type_old);
+        double dE_int = 0.0;
         int index_old, index_new;
         for (int k = 0; k<loader.local_z[j]; k++){ // over neighbors of j
             int jk = loader.getNbrLocalIndex(j, k); 
             if (type_old > 0 && m(i, jk) > 0){
                 index_old = (type_old-1)*(n_types-1)+m(i, jk)-1;   
-                dE -= (*interactions[index_old])(j, k);
+                dE_int -= (*interactions[index_old])(j, k);
             }
             if (type_new > 0 && m(i, jk) > 0){
                 index_new = (type_new-1)*(n_types-1)+m(i, jk)-1;
-                dE += (*interactions[index_new])(j, k);
+                dE_int += (*interactions[index_new])(j, k);
             }
         }
-
+        /* if (world_size==1){
+            if (dE_int!=0.0){
+                std::cout << dE_int << std::endl;
+            }
+        } */
+        dE += dE_int;
         double dF = dE + mu[type_new] - mu[type_old];
 
         double prob = std::exp(-dF/kT);
@@ -441,14 +480,18 @@ int main(int argc, char* argv[]) {
 
         bool global_acceptance_flag = false;
         if (is_vcsgc){
-            std::vector<int> dN_tot(n_types, 0);
             std::vector<int> dN(n_types, 0);
             if (p<=prob){
                 dN[type_new] = 1;
                 dN[type_old] = -1;
             }
-            MPI_Allreduce(dN.data(), dN_tot.data(), n_types, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-
+            std::vector<int> dN_tot;
+            if (world_size > 1) {
+                dN_tot.assign(n_types, 0);
+                MPI_Allreduce(dN.data(), dN_tot.data(), n_types, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            } else {
+                dN_tot = dN;
+            }
             double dF_glob = 0;
             for (int k = 1; k<n_types; k++){
                 dF_glob += kappa*dN_tot[k]*(dN_tot[k] + 2*(number_of_solutes[k]-number_of_solutes_target[k]))/natoms;

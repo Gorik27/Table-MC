@@ -7,7 +7,7 @@
 
 class ProgressBar {
 private:
-    int total_steps;
+    size_t total_steps;
     bool is_active;
     std::chrono::steady_clock::time_point start_time;
 
@@ -37,14 +37,14 @@ private:
 
 public:
     // Теперь третий параметр (ширина) больше не нужен в конструкторе!
-    ProgressBar(int total, bool active = true) 
+    ProgressBar(size_t total, bool active = true) 
         : total_steps(total), is_active(active) {
         if (is_active) {
             start_time = std::chrono::steady_clock::now();
         }
     }
 
-    void update(int current_step) {
+    void update(size_t current_step) {
         if (!is_active || current_step == 0) return;
 
         auto now = std::chrono::steady_clock::now();

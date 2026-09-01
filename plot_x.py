@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 
 kT = 3
-mu_mc = 40
+mu_mc = 20
 
 
 mu = -mu_mc # in MC codes chemical potential is often inverted to classical definition (mu = dG/dX)
@@ -25,11 +25,18 @@ ids_m = ids_m[srt]
 assert np.all(ids_m.astype(int)==np.arange(len(ids_m))+1)
 
 w = np.zeros(len(e0))
+wm = np.zeros(len(e0))
+z = np.zeros(len(e0))
 with open('new_eint.txt') as f:
     for i, line in enumerate(f.readlines()[1:]):
         args = line.replace(' \n', '').replace('\n', '').split(' ')
         ws = list(map(float, args[1:]))
         w[i] = np.sum(ws)
+        z[i] = np.count_nonzero(ws)
+        if z[i]>0:
+            wm[i] = np.mean(ws)
+        else:
+            wm[i] = 0
 
 
 ls = natsorted(glob("dump/x_*.txt"))
@@ -156,3 +163,5 @@ print("mod energy:", np.mean(esm*xm_fermi))
 print("\noriginal energy per solute atom:", np.mean(es0*x0_fermi)/x0_fermi.mean())
 print("NCRS energy per solute atom:", np.mean(esr*xr_fermi)/xr_fermi.mean())
 print("mod energy per solute atom:", np.mean(esm*xm_fermi)/xm_fermi.mean())
+
+
