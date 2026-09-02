@@ -16,13 +16,20 @@ READING
 df = np.loadtxt('new_es.txt', skiprows=1)
 e0 = df[:,1]
 
-df = np.loadtxt('es_mod.txt')
-ids_m = df[:, 0]
-em = df[:, 1]
-srt = np.argsort(ids_m)
-em = em[srt]
-ids_m = ids_m[srt]
-assert np.all(ids_m.astype(int)==np.arange(len(ids_m))+1)
+mod_flag = False
+try:
+    df = np.loadtxt('es_mod.txt')
+    mod_flag = True
+except:
+    pass
+
+if mod_flag:
+    ids_m = df[:, 0]
+    em = df[:, 1]
+    srt = np.argsort(ids_m)
+    em = em[srt]
+    ids_m = ids_m[srt]
+    assert np.all(ids_m.astype(int)==np.arange(len(ids_m))+1)
 
 w = np.zeros(len(e0))
 wm = np.zeros(len(e0))
@@ -67,9 +74,10 @@ srt0 = np.argsort(e0)
 xs0 = x[srt0]
 es0 = e0[srt0]
 
-srtm = np.argsort(em)
-xsm = x[srtm]
-esm = em[srtm]
+if mod_flag:
+    srtm = np.argsort(em)
+    xsm = x[srtm]
+    esm = em[srtm]
 
 """
 CALCULATIONS
@@ -91,7 +99,8 @@ xsr = x[srtr]
 esr = er[srtr]
 xr_fermi = 1/(1+np.exp((esr-mu)/kT))
 
-xm_fermi = 1/(1+np.exp((esm-mu)/kT))
+if mod_flag:
+    xm_fermi = 1/(1+np.exp((esm-mu)/kT))
 
 """
 OUTPUT
@@ -99,7 +108,8 @@ OUTPUT
 
 print('mean x_fermi: ', x0_fermi.mean())
 print('mean x_r_fermi: ', xr_fermi.mean())
-print('mean x_mod  : ', xm_fermi.mean())
+if mod_flag:
+    print('mean x_mod  : ', xm_fermi.mean())
 print('mean x_mc   : ', x.mean())
 
 plt.figure(dpi=300)
@@ -137,31 +147,34 @@ plt.xlabel('x MC')
 plt.ylabel('x NCRS')
 plt.gca().set_box_aspect(1)
 
-plt.subplot(233)
-plt.plot(esm, xmc[srtm], color='black', label='MC')
-plt.plot(esm, xm_fermi, color='red', label='fermi')
-plt.xlabel('energy')
-plt.ylabel('X')
-plt.legend()
-plt.gca().set_box_aspect(1)
-plt.title('modified spectrum')
+if mod_flag:
+    plt.subplot(233)
+    plt.plot(esm, xmc[srtm], color='black', label='MC')
+    plt.plot(esm, xm_fermi, color='red', label='fermi')
+    plt.xlabel('energy')
+    plt.ylabel('X')
+    plt.legend()
+    plt.gca().set_box_aspect(1)
+    plt.title('modified spectrum')
 
-plt.subplot(236)
-plt.plot(cs, cs, linestyle='--', color='grey')
-plt.scatter(xmc[srtm], xm_fermi)
-plt.xlabel('x MC')
-plt.ylabel('x mod')
-plt.gca().set_box_aspect(1)
+    plt.subplot(236)
+    plt.plot(cs, cs, linestyle='--', color='grey')
+    plt.scatter(xmc[srtm], xm_fermi)
+    plt.xlabel('x MC')
+    plt.ylabel('x mod')
+    plt.gca().set_box_aspect(1)
 
 plt.gcf().tight_layout()
 plt.savefig("plot_x.png")
 
 print("\noriginal energy:", np.mean(es0*x0_fermi))
 print("NCRS energy:", np.mean(esr*xr_fermi))
-print("mod energy:", np.mean(esm*xm_fermi))
+if mod_flag:
+    print("mod energy:", np.mean(esm*xm_fermi))
 
 print("\noriginal energy per solute atom:", np.mean(es0*x0_fermi)/x0_fermi.mean())
 print("NCRS energy per solute atom:", np.mean(esr*xr_fermi)/xr_fermi.mean())
-print("mod energy per solute atom:", np.mean(esm*xm_fermi)/xm_fermi.mean())
+if mod_flag:
+    print("mod energy per solute atom:", np.mean(esm*xm_fermi)/xm_fermi.mean())
 
 

@@ -318,8 +318,8 @@ int main(int argc, char* argv[]) {
             interactions.push_back(std::make_unique<Matrix<double>>(cols, z_max, 0.0));
             int index = I*(n_types-1)+J;
             for (int i = 0; i<cols; ++i){
-                for (int j = 0; j<z_max; ++j){
-                    (*interactions[index])(i, j) = loader.local_eint[i, j]*interaction_coef;      // TODO: сделать поддержку нескольких сортов атомов
+                for (int j = 0; j<loader.local_z[i]; ++j){
+                    (*interactions[index])(i, j) = loader.getNbrEint(i, j)*interaction_coef;      // TODO: сделать поддержку нескольких сортов атомов
                 }
             }
             
