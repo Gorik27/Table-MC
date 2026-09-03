@@ -56,7 +56,7 @@ m0 = np.loadtxt(ls[-1], skiprows=1)
 x = np.zeros(m0.shape[0])
 cnt = 0
 
-for file in tqdm(ls[n0::10]):
+for file in tqdm(ls[n0:]):
     xi = np.loadtxt(file, skiprows=1)[:, 1]
     x += xi
     cnt += 1

@@ -1,13 +1,26 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import argparse
 
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-o", '--offset', type=float, default=0, help='fraction of window to offset')
+args = parser.parse_args()
+of = args.offset 
 
 df = np.loadtxt("mc_output.txt", skiprows=2)
 t = df[:, 0]
-acc = df[:, 1]
-N0 = df[:, 2]
-N1 = df[:, 3]
-e = df[:, 4]
+nsteps = len(t)
+if of>0 and of<1:
+    n0 = int(round(of*nsteps))
+    t = t[n0:]
+else:
+    n0 = 0
+acc = df[n0:, 1]
+N0 = df[n0:, 2]
+N1 = df[n0:, 3]
+e = df[n0:, 4]
+
 
 plt.figure(dpi=300)
 
