@@ -8,12 +8,14 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
+#include "matrix.hpp"
 
 class MpiDataLoader {
 private:
     int rank;
     int world_size;
     int max_cols;
+    int n_solute_pairs;
 
 public:
     std::unordered_map<int, int> local_ind;
@@ -24,8 +26,8 @@ public:
     int total_site_types;
 
     // Конструктор инициализирует параметры MPI и задает ширину строки
-    MpiDataLoader(int _max_cols = 20) 
-        : max_cols(_max_cols)
+    MpiDataLoader(int _max_cols = 20, int _n_solutes = 1) 
+        : max_cols(_max_cols), n_solute_pairs(_n_solutes)
     {
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         MPI_Comm_size(MPI_COMM_WORLD, &world_size);
@@ -33,7 +35,7 @@ public:
 
     // Главный метод для загрузки и распределения данных
     void loadAndDistribute(const std::string& nbr_filename, 
-                            const std::string& eint_filename, 
+                            std::vector<std::string> eint_filenames, 
                             std::vector<int> partition,
                             std::vector<int> nbrs) 
         {
@@ -78,40 +80,42 @@ public:
             total_site_types = total_rows;
 
             /// read eint.txt
-            int total_rows2 = 0;
+            for (size_t k = 0; k < n_solute_pairs; ++k) {
+                int total_rows2 = 0;
+                std::string eint_filename = eint_filenames[k];
+                std::ifstream file2(eint_filename);
+                if (!file2.is_open()) {
+                    throw std::runtime_error("MpiDataLoader: Не удалось открыть файл " + eint_filename);
+                }
 
-            std::ifstream file2(eint_filename);
-            if (!file2.is_open()) {
-                throw std::runtime_error("MpiDataLoader: Не удалось открыть файл " + eint_filename);
-            }
+                while (std::getline(file2, line)) {
+                        std::stringstream ss(line);
+                        double energy;
+                        int id_c;
+                        if (!(ss >> id_c)) {
+                            continue; // Если строка пустая, просто пропускаем её
+                        }
 
-            while (std::getline(file2, line)) {
-                    std::stringstream ss(line);
-                    double energy;
-                    int id_c;
-                    if (!(ss >> id_c)) {
-                        continue; // Если строка пустая, просто пропускаем её
-                    }
+                        int count = 0;
 
-                    int count = 0;
-
-                    while (ss >> energy) {
-                        if (count < max_cols) {
-                            global_eint.push_back(energy);
+                        while (ss >> energy) {
+                            if (count < max_cols) {
+                                global_eint.push_back(energy);
+                                count++;
+                            }
+                        }
+                        // Выравнивание строки нулями
+                        while (count < max_cols) {
+                            global_eint.push_back(0.0);
                             count++;
                         }
-                    }
-                    // Выравнивание строки нулями
-                    while (count < max_cols) {
-                        global_eint.push_back(0.0);
-                        count++;
-                    }
-                
-                total_rows2++;
-            }
-            file2.close();
-            if (total_rows2!=total_rows){
-                throw std::runtime_error("MpiDataLoader: number of rows in " + nbr_filename + " and " + eint_filename + " does not match!");
+                    
+                    total_rows2++;
+                }
+                file2.close();
+                if (total_rows2!=total_rows){
+                    throw std::runtime_error("MpiDataLoader: number of rows in " + nbr_filename + " and " + eint_filename + " does not match!");
+                }
             }
         }        
 
@@ -122,18 +126,18 @@ public:
 
             local_z.resize(local_count);
             local_nbrs.resize(local_count * max_cols);
-            local_eint.resize(local_count * max_cols);
+            local_eint.resize(local_count * max_cols * n_solute_pairs);
             for (int i = 0; i < local_count; i++) {
-                int index_needed = i;
                 int z = 0;
                 local_ind[i+1] = i;
                 for (int j = 0; j < max_cols; j++) {
-                    int global_index = index_needed * max_cols + j;
-                    int local_index = i * max_cols + j;
-                    local_nbrs[local_index] = global_ids_n[global_index];
-                    local_eint[i * max_cols + j] = global_eint[global_index];
-                    if (global_ids_n[global_index]!=0){
+                    int index = i * max_cols + j;
+                    local_nbrs[index] = global_ids_n[index];
+                    if (global_ids_n[index]!=0){
                         z++;
+                    }
+                    for (int k = 0; k < n_solute_pairs; k++){
+                        local_eint[index * n_solute_pairs + k] = global_eint[index * n_solute_pairs + k];
                     }
                 }
                 local_z[i] = z;
@@ -144,6 +148,9 @@ public:
         // КОД НИЖЕ ВЫПОЛНЯЕТСЯ ТОЛЬКО ЕСЛИ ПРОЦЕССОВ >= 2
         // ====================================================================
         else {
+            if (n_solute_pairs>1){
+                throw std::runtime_error("[ERROR] Does not support parallel version for n_solute_pairs>1!");
+            }
             local_count = partition.size();
 
             local_z.resize(local_count);
@@ -296,13 +303,16 @@ public:
         return res;
     }
 
-    double getNbrEint(int row, int col) const {
+    double getNbrEint(int row, int col, int type) const {
         if (row >= local_count){
             throw std::runtime_error("Central atom number exceeds maximum!");
         }
         if (col >= local_z[row]){
             throw std::runtime_error("Neighbor number exceeds maximum!");
         }
-        return local_eint[row * max_cols + col];
+        if (type >= n_solute_pairs){
+            throw std::runtime_error("Solute type number exceeds maximum!");
+        }
+        return local_eint[(row * max_cols + col) * n_solute_pairs + type];
     }
 };

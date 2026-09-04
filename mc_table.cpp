@@ -82,35 +82,6 @@ int main(int argc, char* argv[]) {
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
-    PartitionLoader partition;
-    partition.load(std::format("partitions/{}.txt", world_rank+1));
-
-    int z_max = 30;
-    MpiDataLoader loader(z_max*2+1);
-    try {
-        loader.loadAndDistribute("new_neighbors.txt", "new_eint.txt", partition.partition, partition.nbrs);
-
-    } catch (const std::exception& e) {
-        std::cerr << "world_rank " << world_rank << " поймал исключение: " << e.what() << std::endl;
-        MPI_Abort(MPI_COMM_WORLD, 1);
-    }
-
-    int cols = partition.nsites;
-    int cols_ghost = loader.local_ind.size();
-    int rows;
-    size_t mc_steps;
-
-    unsigned int shared_seed = 0;
-    std::mt19937 gen_shared(shared_seed);
-
-    unsigned int seed = world_rank;
-    std::mt19937 gen(seed);
-
-    std::normal_distribution<double> dist(0.0, 1.0);
-    std::uniform_real_distribution<double> uniform(0.0, 1.0);
-    std::uniform_int_distribution<int> uniform_col(0, cols-1);
-
-
     argparse::ArgumentParser program("mc_table");
 
     program.add_argument("-r", "--restart")
@@ -118,12 +89,14 @@ int main(int argc, char* argv[]) {
            .implicit_value(true) 
            .default_value(false);
     
+    int rows;
     program.add_argument("-n", "--rows")
         .help("number of rows")
         .scan<'i', int>()
         .default_value(10)
         .store_into(rows);
-
+    
+    size_t mc_steps;
     program.add_argument("-s", "--steps")
         .help("number of MC steps")
         .scan<'u', size_t>()
@@ -223,6 +196,41 @@ int main(int argc, char* argv[]) {
     std::vector<int> types(n_types);
     std::iota(types.begin(), types.end(), 0); // 0 1 2 3 ... n_types - 1
 
+    PartitionLoader partition;
+    partition.load(std::format("partitions/{}.txt", world_rank+1));
+
+    std::vector<std::string> eint_filenames((n_types-1)*(n_types-1));
+    for (int I = 0; I<n_types-1; ++I){
+        for (int J = 0; J<n_types-1; ++J){
+            int index = I*(n_types-1)+J;
+            eint_filenames[index] = "new_eint_"+std::to_string(I)+"_"+std::to_string(J)+".txt";
+        }
+    }
+
+    int z_max = 30;
+    MpiDataLoader loader(z_max*2+1, (n_types-1)*(n_types-1));
+    try {
+        loader.loadAndDistribute("new_neighbors.txt", eint_filenames, partition.partition, partition.nbrs);
+
+    } catch (const std::exception& e) {
+        std::cerr << "world_rank " << world_rank << " поймал исключение: " << e.what() << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+
+    int cols = partition.nsites;
+    int cols_ghost = loader.local_ind.size();
+
+    unsigned int shared_seed = 0;
+    std::mt19937 gen_shared(shared_seed);
+
+    unsigned int seed = world_rank;
+    std::mt19937 gen(seed);
+
+    std::normal_distribution<double> dist(0.0, 1.0);
+    std::uniform_real_distribution<double> uniform(0.0, 1.0);
+    std::uniform_int_distribution<int> uniform_col(0, cols-1);
+
+
     Matrix<int> m_load;
     if (restart){
         try {
@@ -304,11 +312,11 @@ int main(int argc, char* argv[]) {
     }
     // energy matrix
     Matrix<double> es = Matrix(cols, n_types, 0.0);
-    Matrix<double> es_load;
-    es_load.load_from_text("new_es.txt");
-    for (int i = 0; i<cols; ++i){
-        for (int j = 1; j<n_types; ++j){
-            es(i, j) = es_load(partition.partition[i]-1, 1); // TODO: сделать поддержку нескольких сортов атомов
+    for (int k = 0; k<n_types-1; k++){
+        Matrix<double> es_load;
+        es_load.load_from_text("new_es_"+std::to_string(k)+".txt"); // TODO: заменить число на химический тип
+        for (int i = 0; i<cols; ++i){
+            es(i, k) = es_load(partition.partition[i]-1, 1);
         }
     }
     // interaction matrix
@@ -319,7 +327,7 @@ int main(int argc, char* argv[]) {
             int index = I*(n_types-1)+J;
             for (int i = 0; i<cols; ++i){
                 for (int j = 0; j<loader.local_z[i]; ++j){
-                    (*interactions[index])(i, j) = loader.getNbrEint(i, j)*interaction_coef;      // TODO: сделать поддержку нескольких сортов атомов
+                    (*interactions[index])(i, j) = loader.getNbrEint(i, j, index)*interaction_coef;
                 }
             }
             
