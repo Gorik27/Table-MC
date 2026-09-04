@@ -226,7 +226,6 @@ int main(int argc, char* argv[]) {
     unsigned int seed = world_rank;
     std::mt19937 gen(seed);
 
-    std::normal_distribution<double> dist(0.0, 1.0);
     std::uniform_real_distribution<double> uniform(0.0, 1.0);
     std::uniform_int_distribution<int> uniform_col(0, cols-1);
 
@@ -316,7 +315,7 @@ int main(int argc, char* argv[]) {
         Matrix<double> es_load;
         es_load.load_from_text("new_es_"+std::to_string(k)+".txt"); // TODO: заменить число на химический тип
         for (int i = 0; i<cols; ++i){
-            es(i, k) = es_load(partition.partition[i]-1, 1);
+            es(i, k+1) = es_load(partition.partition[i]-1, 1);
         }
     }
     // interaction matrix

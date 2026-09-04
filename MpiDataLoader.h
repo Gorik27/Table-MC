@@ -313,6 +313,6 @@ public:
         if (type >= n_solute_pairs){
             throw std::runtime_error("Solute type number exceeds maximum!");
         }
-        return local_eint[(row * max_cols + col) * n_solute_pairs + type];
+        return local_eint[type * local_count * max_cols + row * max_cols + col];
     }
 };
