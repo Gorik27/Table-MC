@@ -15,7 +15,7 @@ args = parser.parse_args()
 
 
 suffix = ''
-file_path = f"new_neighbors{suffix}.txt"
+file_path = f"neighbors{suffix}.txt"
 n_clusters = args.n
 
 # Инициализируем списки для координат связей (строка, колонка)

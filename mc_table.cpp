@@ -203,14 +203,14 @@ int main(int argc, char* argv[]) {
     for (int I = 0; I<n_types-1; ++I){
         for (int J = 0; J<n_types-1; ++J){
             int index = I*(n_types-1)+J;
-            eint_filenames[index] = "new_eint_"+std::to_string(I)+"_"+std::to_string(J)+".txt";
+            eint_filenames[index] = "eint_"+std::to_string(I)+"_"+std::to_string(J)+".txt";
         }
     }
 
     int z_max = 30;
     MpiDataLoader loader(z_max*2+1, (n_types-1)*(n_types-1));
     try {
-        loader.loadAndDistribute("new_neighbors.txt", eint_filenames, partition.partition, partition.nbrs);
+        loader.loadAndDistribute("neighbors.txt", eint_filenames, partition.partition, partition.nbrs);
 
     } catch (const std::exception& e) {
         std::cerr << "world_rank " << world_rank << " поймал исключение: " << e.what() << std::endl;
@@ -313,7 +313,7 @@ int main(int argc, char* argv[]) {
     Matrix<double> es = Matrix(cols, n_types, 0.0);
     for (int k = 0; k<n_types-1; k++){
         Matrix<double> es_load;
-        es_load.load_from_text("new_es_"+std::to_string(k)+".txt"); // TODO: заменить число на химический тип
+        es_load.load_from_text("es_"+std::to_string(k)+".txt"); // TODO: заменить число на химический тип
         for (int i = 0; i<cols; ++i){
             es(i, k+1) = es_load(partition.partition[i]-1, 1);
         }
