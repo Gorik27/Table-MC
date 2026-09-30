@@ -8,7 +8,6 @@
 class ProgressBar {
 private:
     size_t total_steps;
-    bool is_active;
     std::chrono::steady_clock::time_point start_time;
 
     // Функция, которая возвращает текущую ширину терминала в символах
@@ -37,15 +36,13 @@ private:
 
 public:
     // Теперь третий параметр (ширина) больше не нужен в конструкторе!
-    ProgressBar(size_t total, bool active = true) 
-        : total_steps(total), is_active(active) {
-        if (is_active) {
+    ProgressBar(size_t total) 
+        : total_steps(total) {
             start_time = std::chrono::steady_clock::now();
-        }
     }
 
     void update(size_t current_step) {
-        if (!is_active || current_step == 0) return;
+        if (current_step == 0) return;
 
         auto now = std::chrono::steady_clock::now();
         auto elapsed_seconds = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
@@ -85,8 +82,6 @@ public:
     }
 
     void finish() {
-        if (is_active) {
-            std::cout << std::endl;
-        }
+        std::cout << std::endl;
     }
 };
