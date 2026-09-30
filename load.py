@@ -4,6 +4,8 @@ from matplotlib import pyplot as plt
 import re
 
 fname = "data.txt"
+element_B = "Cu"
+element_C = "Ni"
 
 eAA = None
 e0B = None
@@ -22,13 +24,13 @@ with open(fname, "r") as f:
                 eAA = float(match.group(1))
                 
         # 2. Ищем E(Ni...)
-        elif "E(Ni@" in line:
+        elif f"E({element_C}@" in line:
             match = re.search(r"=\s*([-\d.]+)$", line)
             if match:
                 e0C = float(match.group(1))
                 
         # 3. Ищем E(Cu...)
-        elif "E(Cu@" in line:
+        elif f"E({element_B}@" in line:
             match = re.search(r"=\s*([-\d.]+)$", line)
             if match:
                 e0B = float(match.group(1))
@@ -44,20 +46,20 @@ df = pd.read_csv(fname, header=0, sep='\s+', comment='#')
 ids_c = df["i"].values.astype(int)
 ids_n = df["j"].values.astype(int)
 
-eBC = df["WCuNi"].values
-eCB = df["WNiCu"].values
-eBB = df["WCuCu"].values
-eCC = df["WNiNi"].values
+eBC = df[f"W{element_B}{element_C}"].values
+eCB = df[f"W{element_C}{element_B}"].values
+eBB = df[f"W{element_B}{element_B}"].values
+eCC = df[f"W{element_C}{element_C}"].values
 
-eBi1s = df["Eseg_i(Cu)"].values
-eCj1s = df["Eseg_j(Ni)"].values
-eBj1s = df["Eseg_j(Cu)"].values
-eCi1s = df["Eseg_i(Ni)"].values
+eBi1s = df[f"Eseg_i({element_B})"].values
+eCj1s = df[f"Eseg_j({element_C})"].values
+eBj1s = df[f"Eseg_j({element_B})"].values
+eCi1s = df[f"Eseg_i({element_C})"].values
 
-eBi2s = df["Eseg_i(Cu).1"].values
-eCj2s = df["Eseg_j(Ni).1"].values
-eBj2s = df["Eseg_j(Cu).1"].values
-eCi2s = df["Eseg_i(Ni).1"].values
+eBi2s = df[f"Eseg_i({element_B}).1"].values
+eCj2s = df[f"Eseg_j({element_C}).1"].values
+eBj2s = df[f"Eseg_j({element_B}).1"].values
+eCi2s = df[f"Eseg_i({element_C}).1"].values
 
 eBis = (eBi1s + eBi2s)/2
 eCis = (eCi1s + eCi2s)/2
@@ -128,25 +130,25 @@ for id in ids:
 with open('es.txt', 'w') as f:
     f.write(eseg_out.rstrip('\n'))
 
-with open('es_0.txt', 'w') as f:
+with open(f'es_{element_B}.txt', 'w') as f:
     f.write(eBseg_out.rstrip('\n'))
 
-with open('es_1.txt', 'w') as f:
+with open(f'es_{element_C}.txt', 'w') as f:
     f.write(eCseg_out.rstrip('\n'))
 
 with open('neighbors.txt', 'w') as f:
     f.write(nbr_out.rstrip('\n'))
     
-with open('eint_0_0.txt', 'w') as f:
+with open(f'eint_{element_B}_{element_B}.txt', 'w') as f:
     f.write(wBB_out.rstrip('\n'))
 
-with open('eint_0_1.txt', 'w') as f:
+with open(f'eint_{element_B}_{element_C}.txt', 'w') as f:
     f.write(wBC_out.rstrip('\n'))
 
-with open('eint_1_0.txt', 'w') as f:
+with open(f'eint_{element_C}_{element_B}.txt', 'w') as f:
     f.write(wCB_out.rstrip('\n'))
 
-with open('eint_1_1.txt', 'w') as f:
+with open(f'eint_{element_C}_{element_C}.txt', 'w') as f:
     f.write(wCC_out.rstrip('\n'))
 
 

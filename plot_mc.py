@@ -8,7 +8,16 @@ parser.add_argument("-o", '--offset', type=float, default=0, help='fraction of w
 args = parser.parse_args()
 of = args.offset 
 
-df = np.loadtxt("mc_output.txt", skiprows=2)
+fname = "mc_output.txt"
+df = np.loadtxt(fname, skiprows=2)
+
+elements = []
+with open(fname) as f:
+    line = f.readlines()[1]
+    for item in line.split(" "):
+        if "X_" in item:
+            elements.append(item.replace("X_", ""))
+
 t = df[:, 0]
 nsteps = len(t)
 if of>0 and of<1:
@@ -36,7 +45,7 @@ plt.title('acceptance')
 plt.subplot(222)
 xs = np.einsum("ij,i->ij", Ns, 1/(N0+np.sum(Ns, axis=1)))
 for k in range(n_types-1):
-    plt.plot(t, xs[:,k], label=f'{k}')
+    plt.plot(t, xs[:,k], label=f'{elements[k+1]}')
 plt.legend()
 plt.xlabel('MC steps')
 plt.title('concentration')
@@ -50,5 +59,5 @@ plt.gcf().tight_layout()
 plt.savefig('plot_mc.png')
 
 for k in range(n_types-1):
-    print(f"final conc {k}:", xs[-1, k])
+    print(f"final conc {elements[k+1]}:", xs[-1, k])
 print("final energy:", e[-1])

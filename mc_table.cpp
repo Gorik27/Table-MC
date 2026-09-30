@@ -39,6 +39,10 @@ int main(int argc, char* argv[]) {
 
     argparse::ArgumentParser program("mc_table");
 
+    program.add_argument("chemical potentials")
+            .help("list of pairs <element mu> (Ni 1.0 Cu 2.5)")
+            .nargs(argparse::nargs_pattern::any); 
+
     program.add_argument("-r", "--restart")
            .help("load restart files")
            .implicit_value(true) 
@@ -71,12 +75,6 @@ int main(int argc, char* argv[]) {
         .scan<'g', double>()
         .default_value(0.0)
         .store_into(kappa);
-
-    program.add_argument("-m", "--mu")
-        .help("chemical potentials")
-        .nargs(argparse::nargs_pattern::at_least_one)
-        .scan<'g', double>()
-        .default_value(std::vector<double>{0.0, 0.0});
         
     program.add_argument("-c", "--conc")
         .help("target concentrations")
@@ -134,17 +132,44 @@ int main(int argc, char* argv[]) {
         c_str += s + " ";
     }
 
-    std::vector<double> mu = program.get<std::vector<double>>("--mu");
-    const int n_types = mu.size();
-    std::uniform_int_distribution<int> uniform_type(0, n_types-1);
+    auto mu_arguments = program.get<std::vector<std::string>>("chemical potentials");
+
+    if (mu_arguments.size() % 2 != 0) {
+        std::cerr << "Error: Odd number of arguments. Every key must have a meaning!" << std::endl;
+        return 1;
+    }
+
+    std::map<std::string, double> mu_map;
+    for (size_t i = 0; i < mu_arguments.size(); i += 2) {
+        try {
+            mu_map[mu_arguments[i]] = std::stod(mu_arguments[i + 1]);
+        } 
+        catch (const std::invalid_argument& e) {
+            std::cerr << "ERROR: expected a double value after chemical specie!" << e.what() << std::endl;
+            return 1;
+        } 
+        catch (const std::out_of_range& e) {
+            std::cerr << "ERROR: the number is too big for double! " << e.what() << std::endl;
+            return 1;
+        }
+    }
 
     std::string mu_str = "";
-    for (double val : mu) {
-        std::string s = std::to_string(val);
+    std::string element_str = "";
+    std::vector<std::string> elements;
+    std::vector<double> mu;
+    for (const auto& [key, value] : mu_map) {
+        std::string s = std::to_string(value);
         s.erase(s.find_last_not_of('0') + 1, std::string::npos); // Удаляем нули на конце
         if (s.back() == '.') s.pop_back();                       // Удаляем точку, если число целое
         mu_str += s + " ";
+        element_str += key + " ";
+        elements.push_back(key);
+        mu.push_back(value);
     }
+
+    const int n_types = elements.size();
+    std::uniform_int_distribution<int> uniform_type(0, n_types-1);
 
     std::vector<int> types(n_types);
     std::iota(types.begin(), types.end(), 0); // 0 1 2 3 ... n_types - 1
@@ -153,7 +178,7 @@ int main(int argc, char* argv[]) {
     for (int I = 0; I<n_types-1; ++I){
         for (int J = 0; J<n_types-1; ++J){
             int index = I*(n_types-1)+J;
-            eint_filenames[index] = "eint_"+std::to_string(I)+"_"+std::to_string(J)+".txt";
+            eint_filenames[index] = "eint_"+elements[I+1]+"_"+elements[J+1]+".txt";
         }
     }
 
@@ -197,6 +222,7 @@ int main(int argc, char* argv[]) {
     std::cout << "       total site types   : " << loader.total_site_types << std::endl;
     std::cout << "       MC steps           : " << mc_steps << std::endl;
     std::cout << "       types              : " << n_types << std::endl;
+    std::cout << "       elements           : " << element_str << std::endl;
     std::cout << "       mu                 : " << mu_str << std::endl;
     if (is_vcsgc){
     std::cout << "===== VCSGC ensemble is used ======" << std::endl;
@@ -241,11 +267,11 @@ int main(int argc, char* argv[]) {
     }
     // energy matrix
     Matrix<double> es = Matrix(cols, n_types, 0.0);
-    for (int k = 0; k<n_types-1; k++){
+    for (int k = 1; k<n_types; k++){
         Matrix<double> es_load;
-        es_load.load_from_text("es_"+std::to_string(k)+".txt"); // TODO: заменить число на химический тип
+        es_load.load_from_text("es_"+elements[k]+".txt");
         for (int i = 0; i<cols; ++i){
-            es(i, k+1) = es_load(i, 1);
+            es(i, k) = es_load(i, 1);
         }
     }
     // interaction matrix
@@ -313,7 +339,7 @@ int main(int argc, char* argv[]) {
     out << std::setw(14) << "step" 
         << std::setw(12) << "acc";
     for (int k = 0; k < n_types; k++) {
-        out << std::setw(12) << ("X_" + std::to_string(k));
+        out << std::setw(12) << ("X_" + elements[k]);
     }
     out << std::setw(15) << "per_site_energy" << std::endl;
     
@@ -416,7 +442,7 @@ int main(int argc, char* argv[]) {
 
         if (step%restart_each==0)
         {   
-            m.save_to_text(restart_dir+"/m_"+std::to_string(1)+".txt");
+            m.save_to_text(restart_dir+"/m.txt");
         } 
 
     }//end MC loop
