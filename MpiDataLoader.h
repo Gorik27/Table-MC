@@ -137,7 +137,7 @@ public:
                         z++;
                     }
                     for (int k = 0; k < n_solute_pairs; k++){
-                        local_eint[index * n_solute_pairs + k] = global_eint[index * n_solute_pairs + k];
+                        local_eint[index + k * local_count * max_cols] = global_eint[index + k * local_count * max_cols];
                     }
                 }
                 local_z[i] = z;
