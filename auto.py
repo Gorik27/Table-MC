@@ -1,14 +1,16 @@
+#!/home/user/miniconda3/bin/python
 import concurrent.futures
 import os
 import shlex
 import shutil
+import glob
 import signal
 import subprocess
 import sys
 import numpy as np
 
 # --- НАСТРОЙКИ ---
-argument_string = "mpirun -np 1 --bind-to none /media/user/HDD/Projects/MC_table/mc_table -s 500000000 -n 1 -T 10 --mu 0"
+argument_string = "mc_table -s 500000000 -n 1 -T 3 Ag 0.0 Ni"
 MPI_COMMAND = shlex.split(argument_string)
 
 # Округляем значения, чтобы избежать багов с плавающей точкой
@@ -17,6 +19,7 @@ ARG_VALUES = np.round(np.linspace(80, -20, num=50), 4)
 FOLDER_TO_COPY = "restart"  
 FOLDER_TO_RENAME = "dump"  
 FILE_TO_RENAME = "mc_output.txt"
+INPUT_FILES = ["neighbors.txt", "es_*.txt", "eint_*.txt"]
 
 NUM_WORKERS = 50
 
@@ -67,11 +70,14 @@ def run_single_calculation(task_args):
         shutil.copytree(base_restart_src, dest_restart_folder)
 
     # Копирование входных файлов
-    INPUT_FILES = ["new_neighbors.txt", "new_es.txt", "new_eint.txt"]
     for INPUT_FILE in INPUT_FILES:
-        src_file_path = os.path.join(root_dir, INPUT_FILE)
-        if os.path.exists(src_file_path):
-            shutil.copy2(src_file_path, os.path.join(work_dir, INPUT_FILE))
+        search_pattern = os.path.join(root_dir, INPUT_FILE)
+        found_files = glob.glob(search_pattern)
+        if found_files:
+            for src_file_path in found_files:
+                # Извлекаем точное имя файла (например, es_123.txt) из полного пути
+                file_name = os.path.basename(src_file_path)
+                shutil.copy2(src_file_path, os.path.join(work_dir, file_name))
 
     current_command = MPI_COMMAND.copy()
     for i, part in enumerate(current_command):
@@ -86,7 +92,7 @@ def run_single_calculation(task_args):
         is_leader = (val == ARG_VALUES[0])
 
         if is_leader:
-            print(f"\n📡 [ВНИМАНИЕ] Процесс mu={val} выбран ЛИДЕРОМ. Его вывод транслируется ниже:\n")
+            print(f"\n[ВНИМАНИЕ] Процесс mu={val} выбран ЛИДЕРОМ. Его вывод транслируется ниже:\n")
             process = subprocess.Popen(current_command, cwd=work_dir, stdout=None, stderr=None)
         else:
             process = subprocess.Popen(current_command, cwd=work_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -134,7 +140,7 @@ def run_single_calculation(task_args):
         # --- АВАРИЙНАЯ ЭВАКУАЦИЯ ДАННЫХ ---
         if not success_saved and os.path.exists(work_dir):
             backup_dir = os.path.join(root_dir, f"BACKUP_mu_{val}")
-            print(f"⚠️  [БЭКАП] Спасение данных mu {val} -> {backup_dir}")
+            print(f"[БЭКАП] Спасение данных mu {val} -> {backup_dir}")
             try:
                 if os.path.exists(backup_dir): shutil.rmtree(backup_dir)
                 shutil.copytree(work_dir, backup_dir)
@@ -159,7 +165,7 @@ def main():
             indexed_args = list(enumerate(ARG_VALUES))
             list(executor.map(run_single_calculation, indexed_args))
         except KeyboardInterrupt:
-            print("\n🛑 Получен Ctrl+C! Запускаем экстренное сохранение бэкапов и закрытие пула...")
+            print("\nПолучен Ctrl+C! Запускаем экстренное сохранение бэкапов и закрытие пула...")
             
             # Быстро останавливаем пул, заставляя воркеры прервать выполнение и уйти в блоки except/finally
             executor.shutdown(wait=True, cancel_futures=True)

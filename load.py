@@ -1,3 +1,4 @@
+#!/home/user/miniconda3/bin/python
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt

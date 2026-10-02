@@ -1,3 +1,4 @@
+#!/home/user/miniconda3/bin/python
 import glob
 import os
 import re
@@ -32,7 +33,7 @@ def process_mc_data():
 
                 # Находим индексы нужных колонок
                 try:
-                    idx_x1 = header.index("X_1")
+                    idx_x1 = header.index("X_Ni")
                     idx_energy = header.index("per_site_energy")
                 except ValueError:
                     print(
@@ -99,8 +100,8 @@ def process_mc_data():
     )
 
     print(f"\nУспешно сохранено! Результаты записаны в: {output_filename}")
-    print(header_text)
-    print(result_array)
+    #print(header_text)
+    #print(result_array)
 
 
 if __name__ == "__main__":
