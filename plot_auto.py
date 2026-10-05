@@ -7,7 +7,7 @@ import numpy as np
 
 def process_mc_data():
     # Регулярное выражение для поиска val (включая целые, дробные и отрицательные числа)
-    pattern = re.compile(r"mc_output_mu_(-?\d+\.?\d*)\.txt")
+    pattern = re.compile(r"mc_output_mu((_-?\d+\.?\d*)+)\.txt")
 
     data_list = []
 
@@ -19,8 +19,8 @@ def process_mc_data():
         if match:
             
             # Извлекаем значение val и преобразуем во float
-            val = float(match.group(1))
-            print(val)
+            vals = [float(item) for item in match.group(1).lstrip('_').split('_')]
+            print(vals)
             try:
                 # Читаем только названия колонок (первую строку), чтобы узнать их индексы
                 with open(file_path, "r") as f:
@@ -33,20 +33,27 @@ def process_mc_data():
 
                 # Находим индексы нужных колонок
                 try:
-                    idx_x1 = header.index("X_Ni")
+                    idx_x1 = header.index("X_Ni") #TODO
+                    if len(vals)==2:
+                        idx_x2 = header.index("X_Cu")
                     idx_energy = header.index("per_site_energy")
                 except ValueError:
                     print(
-                        f"Пропущен файл {file_path}: отсутствуют колонки 'X_1' или 'per_site_energy'."
+                        f"Пропущен файл {file_path}: отсутствуют колонки 'X_*' или 'per_site_energy'."
                     )
                     continue
 
                 # Загружаем данные с помощью np.loadtxt
                 # skiprows=1 пропускает строку с заголовками
                 # usecols считывает только нужные нам столбцы
-                data = np.loadtxt(
-                    file_path, skiprows=2, usecols=(idx_x1, idx_energy)
-                )
+                if len(vals)==1:
+                    data = np.loadtxt(
+                        file_path, skiprows=2, usecols=(idx_x1, idx_energy)
+                    )
+                if len(vals)==2:
+                    data = np.loadtxt(
+                        file_path, skiprows=2, usecols=(idx_x1, idx_x2, idx_energy)
+                    )
 
                 # Если в файле была всего одна строка данных, numpy сделает массив одномерным
                 if data.ndim == 1:
@@ -68,11 +75,15 @@ def process_mc_data():
                 # Считаем среднее арифметическое по колонкам (ось 0)
                 mean_values = np.mean(tail_data, axis=0)
                 mean_x1 = mean_values[0]
-                mean_energy = mean_values[1]
+                if len(vals)==2:
+                    mean_x2 = mean_values[1]
+                mean_energy = mean_values[-1]
 
                 # Сохраняем результат в список
-                data_list.append([val, mean_x1, mean_energy])
-
+                if len(vals)==1:
+                    data_list.append([vals[0], mean_x1, mean_energy])
+                if len(vals)==2:
+                    data_list.append([vals[0], vals[1], mean_x1, mean_x2, mean_energy])
             except Exception as e:
                 print(f"Ошибка при обработке файла {file_path}: {e}")
 
@@ -83,21 +94,32 @@ def process_mc_data():
     # Превращаем список в numpy массив
     result_array = np.array(data_list)
 
-    # Сортируем массив по первой колонке (по возрастанию val)
-    result_array = result_array[result_array[:, 0].argsort()]
+    # Сортируем массив по первой колонке (по возрастанию vals)
+    sorted_indices = np.lexsort((result_array[:, 1], result_array[:, 0]))
+    result_array = result_array[sorted_indices]
 
     # Сохраняем итоговые зависимости в файл с помощью np.savetxt
     output_filename = "mc_auto_output.txt"
-    header_text = "val\tmean_X_1\tmean_per_site_energy"
-
-    np.savetxt(
-        output_filename,
-        result_array,
-        fmt="%.6f",
-        delimiter="\t",
-        header=header_text,
-        comments="",
-    )
+    if len(vals)==1:
+        header_text = "mu_1\tmean_X_1\tmean_per_site_energy"
+        np.savetxt(
+            output_filename,
+            result_array,
+            fmt="%.6f",
+            delimiter="\t",
+            header=header_text,
+            comments="",
+        )
+    if len(vals)==2:
+        header_text = "mu_1\tmu_2\tmean_X_1\tmean_X_2\tmean_per_site_energy"
+        np.savetxt(
+            output_filename,
+            result_array,
+            fmt="%.6f",
+            delimiter="\t",
+            header=header_text,
+            comments="",
+        )
 
     print(f"\nУспешно сохранено! Результаты записаны в: {output_filename}")
     #print(header_text)
