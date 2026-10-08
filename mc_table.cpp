@@ -39,21 +39,14 @@ int main(int argc, char* argv[]) {
 
     argparse::ArgumentParser program("mc_table");
 
-    program.add_argument("chemical potentials")
-            .help("list of pairs <element mu> (Ni 1.0 Cu 2.5)")
+    program.add_argument("total concentrations")
+            .help("list of pairs <element Xtot [in at.%]> (Ni 1.0 Cu 2.5)")
             .nargs(argparse::nargs_pattern::any); 
 
     program.add_argument("-r", "--restart")
            .help("load restart files")
            .implicit_value(true) 
            .default_value(false);
-    
-    int rows;
-    program.add_argument("-n", "--rows")
-        .help("number of rows")
-        .scan<'i', int>()
-        .default_value(10)
-        .store_into(rows);
     
     size_t mc_steps;
     program.add_argument("-s", "--steps")
@@ -69,18 +62,26 @@ int main(int argc, char* argv[]) {
         .default_value(3.0)
         .store_into(kT);
 
-    double kappa;
-    program.add_argument("-k", "--kappa")
-        .help("kappa")
+    double fgb_trial_fraction;
+    program.add_argument("--fgb-trial")
+        .help("fraction of fgb trail steps (from 0 to 1)")
         .scan<'g', double>()
-        .default_value(0.0)
-        .store_into(kappa);
-        
-    program.add_argument("-c", "--conc")
-        .help("target concentrations")
-        .nargs(argparse::nargs_pattern::at_least_one)
+        .default_value(0.1)
+        .store_into(fgb_trial_fraction);
+
+    double fgb_step;
+    program.add_argument("--fgb-step")
+        .help("fgb trail step magnitude (from 0 to 1)")
         .scan<'g', double>()
-        .default_value(std::vector<double>{0.5});
+        .default_value(0.1)
+        .store_into(fgb_trial_fraction);
+
+    double fgb;
+    program.add_argument("--fgb")
+        .help("initial f_gb (from 0 to 1)")
+        .scan<'g', double>()
+        .default_value(0.2)
+        .store_into(fgb);
 
     double interaction_coef;
     program.add_argument("-w")
@@ -89,6 +90,18 @@ int main(int argc, char* argv[]) {
         .default_value(1.0)
         .store_into(interaction_coef);
 
+    std::string matrix_el;
+    program.add_argument("--matrix")
+        .help("matrix element")
+        .default_value(std::string("Ag"))
+        .store_into(matrix_el);
+
+    double kgamma;
+    program.add_argument("-g", "--gamma")
+        .help("kgamma - per-atom structural GB energy [kJ/mol]")
+        .scan<'g', double>()
+        .default_value(9.31581395739516)
+        .store_into(kgamma);
 
     size_t dump_each;
     program.add_argument("--dump-each")
@@ -120,29 +133,33 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    bool restart = program.get<bool>("--restart");
-    bool is_vcsgc = program.is_used("--kappa");
-
-    std::vector<double> concentrations_target = program.get<std::vector<double>>("--conc");
-    std::string c_str = "";
-    for (double val : concentrations_target) {
-        std::string s = std::to_string(val);
-        s.erase(s.find_last_not_of('0') + 1, std::string::npos); // Удаляем нули на конце
-        if (s.back() == '.') s.pop_back();                       // Удаляем точку, если число целое
-        c_str += s + " ";
-    }
-
-    auto mu_arguments = program.get<std::vector<std::string>>("chemical potentials");
-
-    if (mu_arguments.size() % 2 != 0) {
-        std::cerr << "Error: Odd number of arguments. Every key must have a meaning!" << std::endl;
+    if (fgb_trial_fraction < 0.0 || fgb_trial_fraction > 1.0) {
+        std::cerr << "ERROR: fraction of fgb trial steps must be from 0 to 1!" << std::endl;
         return 1;
     }
 
-    std::map<std::string, double> mu_map;
-    for (size_t i = 0; i < mu_arguments.size(); i += 2) {
+    if (fgb_step < 0.0 || fgb_step > 1.0) {
+        std::cerr << "ERROR: fgb trial step magnitude must be from 0 to 1!" << std::endl;
+        return 1;
+    }
+
+    bool restart = program.get<bool>("--restart");
+
+    auto xtot_arguments = program.get<std::vector<std::string>>("total concentrations");
+
+    if (xtot_arguments.size() % 2 != 0) {
+        std::cerr << "ERROR: Odd number of arguments. Every key must have a meaning!" << std::endl;
+        return 1;
+    }
+
+    std::map<std::string, double> xtot_map;
+    for (size_t i = 0; i < xtot_arguments.size(); i += 2) {
         try {
-            mu_map[mu_arguments[i]] = std::stod(mu_arguments[i + 1]);
+            xtot_map[xtot_arguments[i]] = std::stod(xtot_arguments[i + 1])/100;
+            if (xtot_map[xtot_arguments[i]] < 0.0  || xtot_map[xtot_arguments[i]] > 1.0){
+                std::cerr << "ERROR: expected a concentration in at. % (from 0.0 to 100.0)!" << std::endl;
+                return 1;
+            }
         } 
         catch (const std::invalid_argument& e) {
             std::cerr << "ERROR: expected a double value after chemical specie!" << e.what() << std::endl;
@@ -154,18 +171,37 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::string mu_str = "";
-    std::string element_str = "";
+    std::string xtot_str = "";
+    std::string element_str = matrix_el + " ";
     std::vector<std::string> elements;
-    std::vector<double> mu;
-    for (const auto& [key, value] : mu_map) {
+    std::vector<double> Xtot;
+    elements.push_back(matrix_el);
+    Xtot.push_back(1.0);
+    for (const auto& [key, value] : xtot_map) {
         std::string s = std::to_string(value);
         s.erase(s.find_last_not_of('0') + 1, std::string::npos); // Удаляем нули на конце
         if (s.back() == '.') s.pop_back();                       // Удаляем точку, если число целое
-        mu_str += s + " ";
+        xtot_str += s + " ";
         element_str += key + " ";
         elements.push_back(key);
-        mu.push_back(value);
+        Xtot.push_back(value);
+        Xtot[0] -= value;
+    }
+    
+
+    if (Xtot[0] < 0.0){
+        std::cerr << "ERROR: Total solute concetration exceeds 100%!" << std::endl;
+        return 1;
+    }
+
+    std::string s = std::to_string(Xtot[0]);
+    s.erase(s.find_last_not_of('0') + 1, std::string::npos); // Удаляем нули на конце
+    if (s.back() == '.') s.pop_back();                       // Удаляем точку, если число целое
+    xtot_str = s + " " + xtot_str;
+
+    if (fgb<0 || fgb>1){
+        std::cerr << "ERROR: fgb must be from 0 to 1!" << std::endl;
+        return 1;
     }
 
     const int n_types = elements.size();
@@ -181,6 +217,7 @@ int main(int argc, char* argv[]) {
             eint_filenames[index] = "eint_"+elements[I+1]+"_"+elements[J+1]+".txt";
         }
     }
+    
 
     int z_max = 30;
     DataLoader loader(z_max*2+1, (n_types-1)*(n_types-1));
@@ -188,7 +225,7 @@ int main(int argc, char* argv[]) {
         loader.loadAndDistribute("neighbors.txt", eint_filenames);
 
     } catch (const std::exception& e) {
-        std::cerr << " Исключение: " << e.what() << std::endl;
+        std::cerr << " ERROR: " << e.what() << std::endl;
     }
 
     int cols = loader.total_site_types;
@@ -209,60 +246,34 @@ int main(int argc, char* argv[]) {
             std::cerr << "[ERROR]: cannot open restart file" << std::endl;
             return 1;
         }
-        if (rows != m_load.rows()){
-            std::cerr << "[WARNING]: Number of rows in restart file differs!!! Number from restart will be used" << std::endl;
-        }
-        rows = m_load.rows();
     }
 
-    std::cout << "===================================" << std::endl;
-    std::cout << "===== Input parameters ============" << std::endl;
-    std::cout << "===================================" << std::endl;
-    std::cout << "       rows               : " << rows << std::endl;
-    std::cout << "       total site types   : " << loader.total_site_types << std::endl;
-    std::cout << "       MC steps           : " << mc_steps << std::endl;
-    std::cout << "       types              : " << n_types << std::endl;
-    std::cout << "       elements           : " << element_str << std::endl;
-    std::cout << "       mu                 : " << mu_str << std::endl;
-    if (is_vcsgc){
-    std::cout << "===== VCSGC ensemble is used ======" << std::endl;
-    std::cout << "       kappa              : " << kappa << std::endl;
-    std::cout << "       target c           : " << c_str << std::endl;
-    }
-    std::cout << "===================================\n\n" << std::endl;
+    std::cout << "==========================================================" << std::endl;
+    std::cout << "================= MC + Grain Growth ======================" << std::endl;
+    std::cout << "==========================================================" << std::endl;
+    std::cout << "==========================================================" << std::endl;
+    std::cout << "================= Input parameters =======================" << std::endl;
+    std::cout << "==========================================================" << std::endl;
+    std::cout << "               total site types     : " << loader.total_site_types << std::endl;
+    std::cout << "               MC steps             : " << mc_steps << std::endl;
+    std::cout << "               types                : " << n_types << std::endl;
+    std::cout << "               elements             : " << element_str << std::endl;
+    std::cout << "               total concentrations : " << xtot_str << std::endl;
+    std::cout << "               fgb trial fraction   : " << fgb_trial_fraction << std::endl;
+    std::cout << "=========================================================\n\n" << std::endl;
     if (restart){
-    std::cout << "===== RESTART LOADED ==============" << std::endl;
-    std::cout << "===================================\n\n" << std::endl;
+    std::cout << "================= RESTART LOADED ========================" << std::endl;
+    std::cout << "=========================================================\n\n" << std::endl;
     }
     
 
-    
-    std::uniform_int_distribution<int> uniform_row(0, rows-1);
-
-    int natoms = rows*loader.total_site_types;
-
-    std::vector<int> number_of_solutes_target(n_types, 0);
-    double c0 = 1.0;
-    for (int k = 1; k<n_types; k++){
-        number_of_solutes_target[k] = static_cast<int>(concentrations_target[k-1]*natoms);
-        c0 = c0 - concentrations_target[k-1];
-    }
-    if (c0<0.0){
-        std::cerr << "[ERROR]: Total solute concentration exeeds 100%!!!!" << std::endl;
-        return 1;
-    }
-    number_of_solutes_target[0] = static_cast<int>(c0*natoms);
+    int natoms = loader.total_site_types;
 
     // occupation matrix
-    Matrix<double> x;
-    x = Matrix(loader.total_site_types, n_types, 0.0); 
-
-    Matrix<int> m = Matrix(rows, cols, types[0]); 
+    Matrix<int> m = Matrix(1, cols, types[0]); 
     if (restart){
-        for (int i = 0; i<rows; i++){
-            for (int j = 0; j<cols; j++){
-                m(i, j) = m_load(i, j);
-            }
+        for (int j = 0; j<cols; j++){
+            m(0, j) = m_load(0, j); // TODO to vectors
         }
     }
     // energy matrix
@@ -284,35 +295,52 @@ int main(int argc, char* argv[]) {
                 for (int j = 0; j<loader.z[i]; ++j){
                     (*interactions[index])(i, j) = loader.getNbrEint(i, j, index)*interaction_coef;
                 }
-            }
-            
+            }   
         }
     } 
 
     double energy = 0.0;
     std::vector<int> number_of_solutes(n_types, 0);
     if (restart){
-        for (int i = 0; i<rows; i++){
-            for (int j = 0; j<cols; j++){
-                energy += es(j, m(i, j));
-                if (m(i, j)>0){
-                    for (int k = 0; k<loader.z[j]; k++){ // over neighbors of j
-                        int jk = loader.getNbrIndex(j, k); 
-                        if (m(i, jk) > 0){
-                            int index = (m(i, j)-1)*(n_types-1)+m(i, jk)-1;   
-                            energy += (*interactions[index])(j, k)/2;
-                        }
+        for (int j = 0; j<cols; j++){
+            energy += es(j, m(0, j));
+            if (m(0, j)>0){
+                for (int k = 0; k<loader.z[j]; k++){ // over neighbors of j
+                    int jk = loader.getNbrIndex(j, k); 
+                    if (m(0, jk) > 0){
+                        int index = (m(0, j)-1)*(n_types-1)+m(0, jk)-1;   
+                        energy += (*interactions[index])(j, k)/2;
                     }
                 }
-                number_of_solutes[m(i, j)] ++;
             }
+            number_of_solutes[m(0, j)] ++;
         }
     }
     else {
-        number_of_solutes[types[0]] = rows*cols;
+        number_of_solutes[types[0]] = cols;
     }
     
-    int accepted = 0;
+
+    std::vector<int> Xc(n_types, 0);
+    for (int k=0; k<n_types; k++){
+        Xc[k] = (Xtot[k]-fgb*number_of_solutes[k]/cols)/(1-fgb);
+        if (Xc[k] < 0.0 || Xc[k] > 1.0){
+            std::cerr << "ERROR: Such fgb, Xgb and Xtot leads to unphysical Xc: " << Xc[k] << " for " << elements[k] << std::endl;
+            return 1;
+        }
+    }
+    std::vector<int> Xc_new(n_types, 0);
+
+    double Sc = 0.0;
+        for (int k=0; k<n_types; k++){
+            if (Xc[k] > 0.0){
+                Sc += Xc[k]*log(Xc[k]);
+            }
+        }
+    double Sc_new;
+
+    int accepted1 = 0;
+    int accepted2 = 0;
 
     std::ofstream out;
     try {
@@ -329,15 +357,17 @@ int main(int argc, char* argv[]) {
         std::cerr << "[ERROR]: error during removing of restart folder: " << e.what() << std::endl;
     }
     std::filesystem::create_directory(restart_dir); 
-    out.open("mc_output.txt");
+    out.open("mc_gg_output.txt");
     if (!out.is_open()) {
         std::cerr << "[ERROR]: error during creating of mc_output.txt file:" << std::endl;
         return 1; 
     }
-    out << "mc_output" << std::endl;
+    out << "MC + Grain Growth. kT: " << kT << std::endl;
     out << std::left; 
     out << std::setw(14) << "step" 
-        << std::setw(12) << "acc";
+        << std::setw(12) << "acc_1"
+        << std::setw(12) << "acc_2"
+        << std::setw(12) << "f_gb";
     for (int k = 0; k < n_types; k++) {
         out << std::setw(12) << ("X_" + elements[k]);
     }
@@ -347,65 +377,107 @@ int main(int argc, char* argv[]) {
     ProgressBar bar(mc_steps);
 
     for (size_t step = 1; step <= mc_steps; step++){      
-        /// trial step
-        int i = uniform_row(gen);
-        int j = uniform_col(gen);
-        int type_old = m(i, j);
-        int type_new = type_old;
-        while (type_new == type_old){
-            type_new = types[uniform_type(gen)];
-        }
+        double trial_type = uniform(gen);
+        if (trial_type<1-fgb_trial_fraction){// trial step #1
+            int j = uniform_col(gen);
+            int type_old = m(0, j);
+            int type_new = type_old;
+            while (type_new == type_old){
+                type_new = types[uniform_type(gen)];
+            }
 
-        double dE = es(j, type_new) - es(j, type_old);
-        double dE_int = 0.0;
-        int index_old, index_new;
-        for (int k = 0; k<loader.z[j]; k++){ // over neighbors of j
-            int jk = loader.getNbrIndex(j, k); 
-            if (type_old > 0 && m(i, jk) > 0){
-                index_old = (type_old-1)*(n_types-1)+m(i, jk)-1;   
-                dE_int -= (*interactions[index_old])(j, k);
-            }
-            if (type_new > 0 && m(i, jk) > 0){
-                index_new = (type_new-1)*(n_types-1)+m(i, jk)-1;
-                dE_int += (*interactions[index_new])(j, k);
-            }
-        }
-        dE += dE_int;
-        double dF = dE + mu[type_new] - mu[type_old];
+            bool auto_reject = false;
+            for (int k=0; k<n_types; k++){
+                double Xgb_new = number_of_solutes[k];
+                if (k==type_new){
+                    Xgb_new ++;
+                }
+                if (k==type_old){
+                    Xgb_new --;
+                }
+                Xgb_new /= cols;
 
-        double prob = std::exp(-dF/kT);
-        double p = uniform(gen);
+                Xc_new[k] = (Xtot[k]-fgb*Xgb_new)/(1-fgb);
+                if (Xc_new[k] < 0.0 || Xc_new[k] > 1.0){
+                    auto_reject = true;
+                }
+            }
+            Sc_new = 0.0;
+            for (int k=0; k<n_types; k++){
+                if (Xc[k] > 0.0){
+                    Sc_new += Xc_new[k]*log(Xc_new[k]);
+                }
+            }
 
-        bool vcsgc_acceptance_flag = false;
-        if (is_vcsgc){
-            std::vector<int> dN(n_types, 0);
-            if (p<=prob){
-                dN[type_new] = 1;
-                dN[type_old] = -1;
-            }
-            double dF_vcsgc = 0;
-            for (int k = 1; k<n_types; k++){
-                dF_vcsgc += kappa*dN[k]*(dN[k] + 2*(number_of_solutes[k]-number_of_solutes_target[k]))/natoms;
-            }
-            double prob_vcsgc = std::exp(-dF_vcsgc/kT);
-            double p_vcsgc = uniform(gen);
-            vcsgc_acceptance_flag = (p_vcsgc<=prob_vcsgc);
-            if (vcsgc_acceptance_flag){
-                for (int k = 0; k<n_types; k++){
-                    number_of_solutes[k] += dN[k];
+            if (!auto_reject){
+                double dE = es(j, type_new) - es(j, type_old);
+                double dE_int = 0.0;
+                int index_old, index_new;
+                for (int k = 0; k<loader.z[j]; k++){ // over neighbors of j
+                    int jk = loader.getNbrIndex(j, k); 
+                    if (type_old > 0 && m(0, jk) > 0){
+                        index_old = (type_old-1)*(n_types-1)+m(0, jk)-1;   
+                        dE_int -= (*interactions[index_old])(j, k);
+                    }
+                    if (type_new > 0 && m(0, jk) > 0){
+                        index_new = (type_new-1)*(n_types-1)+m(0, jk)-1;
+                        dE_int += (*interactions[index_new])(j, k);
+                    }
+                }
+                dE += dE_int;
+
+                double dF = dE + cols*(1-fgb)*kT*(Sc_new-Sc);
+
+                double prob = std::exp(-dF/kT);
+                double p = uniform(gen);
+
+                if (p<=prob){
+                    m(0, j) = type_new;
+                    accepted1 ++;
+                    number_of_solutes[type_new]++;
+                    number_of_solutes[type_old]--;
+                    energy += dE; // TODO разделить на полную энергию и энергию гз
+                    for (int k=0; k<n_types; k++){
+                        Xc[k] = Xc_new[k];
+                    }
+                    Sc = Sc_new;
                 }
             }
         }
-        else {
-            vcsgc_acceptance_flag = true;
-        }
+        else { // trial step #2
+            double dfgb = (uniform(gen)*2-1)*fgb_step;
+            double fgb_new = fgb + dfgb;
+            if (fgb_new > 0 && fgb_new < 1){
+                bool auto_reject = false;
+                for (int k=0; k<n_types; k++){
+                    double Xgb = number_of_solutes[k]/cols;
+                    Xc_new[k] = (Xtot[k]-fgb_new*Xgb)/(1-fgb_new);
+                    if (Xc_new[k] < 0.0 || Xc_new[k] > 1.0){
+                        auto_reject = true;
+                    }
+                }
+                if (!auto_reject){
+                    Sc_new = 0.0;
+                    for (int k=0; k<n_types; k++){
+                        if (Xc[k] > 0.0){
+                            Sc_new += Xc_new[k]*log(Xc_new[k]);
+                        }
+                    }
+                    double dF = dfgb*(cols*kgamma + energy) + kT*((1-fgb_new)*Sc_new - (1-fgb)*Sc);
+                    double prob = std::exp(-dF/kT);
+                    double p = uniform(gen);
 
-        if (p<=prob && vcsgc_acceptance_flag){
-            m(i, j) = type_new;
-            accepted ++;
-            number_of_solutes[type_new]++;
-            number_of_solutes[type_old]--;
-            energy += dE;
+                    if (p<=prob){
+                        accepted2 ++;
+                        for (int k=0; k<n_types; k++){
+                            Xc[k] = Xc_new[k];
+                        }
+                        Sc = Sc_new;
+                        fgb = fgb_new;
+                    }
+                }
+            }
+
         }
 
         // thermo
@@ -413,31 +485,25 @@ int main(int argc, char* argv[]) {
         {
             bar.update(step); 
             //thermo
-            double acc = static_cast<double>(accepted)/dump_each;
+            double acc1 = static_cast<double>(accepted1)/dump_each/(1-fgb_trial_fraction);
+            double acc2 = static_cast<double>(accepted2)/dump_each/fgb_trial_fraction;
             out << std::left;
             out << std::setw(14) << step;
-            out << std::setw(12) << std::fixed << std::setprecision(6) << acc;
+            out << std::setw(12) << std::fixed << std::setprecision(6) << acc1;
+            out << std::setw(12) << std::fixed << std::setprecision(6) << acc2;
+            out << std::setw(12) << std::fixed << std::setprecision(6) << fgb;
             for (int k = 0; k<n_types; k++){
                 out << std::setw(12) << std::fixed << std::setprecision(4) << static_cast<double>(number_of_solutes[k])/natoms;
             }
             out << std::setw(15) << std::fixed << std::setprecision(4) << energy/natoms << std::endl;
             
-            accepted = 0;
+            accepted1 = 0;
+            accepted2 = 0;
         }
 
         if (step%dump_each==0)
         {
-            for (int jj = 0; jj<cols; jj++){
-                for (int ii = 0; ii<rows; ii++){
-                    x(jj, m(ii, jj)) ++;
-                }
-                for (int k=0; k<n_types; k++){
-                    x(jj, k) /= rows;
-                }
-            }
-
-            x.save_to_text(dump_dir+"/x_"+std::to_string(step)+".txt");
-            
+            m.save_to_text(dump_dir+"/m_"+std::to_string(step)+".txt");   
         } 
 
         if (step%restart_each==0)
