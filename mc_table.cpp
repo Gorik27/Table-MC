@@ -74,7 +74,7 @@ int main(int argc, char* argv[]) {
         .help("fgb trail step magnitude (from 0 to 1)")
         .scan<'g', double>()
         .default_value(0.1)
-        .store_into(fgb_trial_fraction);
+        .store_into(fgb_step);
 
     double fgb;
     program.add_argument("--fgb")
@@ -321,7 +321,7 @@ int main(int argc, char* argv[]) {
     }
     
 
-    std::vector<int> Xc(n_types, 0);
+    std::vector<double> Xc(n_types, 0);
     for (int k=0; k<n_types; k++){
         Xc[k] = (Xtot[k]-fgb*number_of_solutes[k]/cols)/(1-fgb);
         if (Xc[k] < 0.0 || Xc[k] > 1.0){
@@ -329,7 +329,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
-    std::vector<int> Xc_new(n_types, 0);
+    std::vector<double> Xc_new(n_types, 0);
 
     double Sc = 0.0;
         for (int k=0; k<n_types; k++){
@@ -362,21 +362,28 @@ int main(int argc, char* argv[]) {
         std::cerr << "[ERROR]: error during creating of mc_output.txt file:" << std::endl;
         return 1; 
     }
-    out << "MC + Grain Growth. kT: " << kT << std::endl;
+    out << "MC + Grain Growth. kT: " << kT;
+    for (int k = 1; k < n_types; k++){
+        out << (" Xtot_" + elements[k] + ": " + std::to_string(Xtot[k]));
+    }
+    out << std::endl;
     out << std::left; 
     out << std::setw(14) << "step" 
         << std::setw(12) << "acc_1"
         << std::setw(12) << "acc_2"
         << std::setw(12) << "f_gb";
     for (int k = 0; k < n_types; k++) {
-        out << std::setw(12) << ("X_" + elements[k]);
+        out << std::setw(12) << ("Xgb_" + elements[k]);
     }
-    out << std::setw(15) << "per_site_energy" << std::endl;
+    for (int k = 0; k < n_types; k++) {
+        out << std::setw(12) << ("Xc_" + elements[k]);
+    }
+    out << std::setw(15) << "per_site_seg_energy" << std::endl;
     
     
     ProgressBar bar(mc_steps);
 
-    for (size_t step = 1; step <= mc_steps; step++){      
+    for (size_t step = 0; step < mc_steps; step++){      
         double trial_type = uniform(gen);
         if (trial_type<1-fgb_trial_fraction){// trial step #1
             int j = uniform_col(gen);
@@ -426,7 +433,7 @@ int main(int argc, char* argv[]) {
                 }
                 dE += dE_int;
 
-                double dF = dE + cols*(1-fgb)*kT*(Sc_new-Sc);
+                double dF = fgb*dE + cols*(1-fgb)*kT*(Sc_new-Sc);
 
                 double prob = std::exp(-dF/kT);
                 double p = uniform(gen);
@@ -445,17 +452,22 @@ int main(int argc, char* argv[]) {
             }
         }
         else { // trial step #2
-            double dfgb = (uniform(gen)*2-1)*fgb_step;
+            double dfgb = (uniform(gen)*2.0-1.0)*fgb_step;
             double fgb_new = fgb + dfgb;
             if (fgb_new > 0 && fgb_new < 1){
                 bool auto_reject = false;
-                for (int k=0; k<n_types; k++){
-                    double Xgb = number_of_solutes[k]/cols;
-                    Xc_new[k] = (Xtot[k]-fgb_new*Xgb)/(1-fgb_new);
-                    if (Xc_new[k] < 0.0 || Xc_new[k] > 1.0){
-                        auto_reject = true;
-                    }
+                for (int k=1; k<n_types; k++){
+                    double Xgb = static_cast<double>(number_of_solutes[k])/cols;
+                    Xc_new[k] = (Xtot[k]-fgb_new*Xgb)/(1.0-fgb_new);
                 }
+                Xc_new[0] = 1.0;
+                for (int k=1; k<n_types; k++){
+                    Xc_new[0] -= Xc_new[k];
+                }
+                if (Xc_new[0] < 0.0 || Xc_new[0] > 1.0){
+                    auto_reject = true;
+                }
+
                 if (!auto_reject){
                     Sc_new = 0.0;
                     for (int k=0; k<n_types; k++){
@@ -467,6 +479,7 @@ int main(int argc, char* argv[]) {
                     double prob = std::exp(-dF/kT);
                     double p = uniform(gen);
 
+                    //std::cout << "step 2: " << dF << std::endl;
                     if (p<=prob){
                         accepted2 ++;
                         for (int k=0; k<n_types; k++){
@@ -481,7 +494,7 @@ int main(int argc, char* argv[]) {
         }
 
         // thermo
-        if (step%print_each==0 || step == mc_steps)
+        if (step%print_each==0 || step == mc_steps-1)
         {
             bar.update(step); 
             //thermo
@@ -494,6 +507,9 @@ int main(int argc, char* argv[]) {
             out << std::setw(12) << std::fixed << std::setprecision(6) << fgb;
             for (int k = 0; k<n_types; k++){
                 out << std::setw(12) << std::fixed << std::setprecision(4) << static_cast<double>(number_of_solutes[k])/natoms;
+            }
+            for (int k = 0; k<n_types; k++){
+                out << std::setw(12) << std::fixed << std::setprecision(4) << Xc[k];
             }
             out << std::setw(15) << std::fixed << std::setprecision(4) << energy/natoms << std::endl;
             
