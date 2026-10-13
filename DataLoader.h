@@ -30,7 +30,7 @@ public:
         {
         int total_rows = 0;
 
-        /// read new_neighbors.txt
+        /// read neighbors.txt
         std::ifstream file1(nbr_filename);
         if (!file1.is_open()) {
             throw std::runtime_error("DataLoader: Не удалось открыть файл " + nbr_filename);

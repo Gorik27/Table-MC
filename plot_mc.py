@@ -9,7 +9,7 @@ parser.add_argument("-o", '--offset', type=float, default=0, help='fraction of w
 args = parser.parse_args()
 of = args.offset 
 
-fname = "mc_output.txt"
+fname = "mc_gg_output.txt"
 df = np.loadtxt(fname, skiprows=2)
 
 elements = []
