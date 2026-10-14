@@ -5,8 +5,8 @@ from matplotlib import pyplot as plt
 import re
 
 fname = "data.txt"
-element_B = "Cu"
-element_C = "Ni"
+element_B = "Ni"
+element_C = "Cu"
 
 eAA = None
 e0B = None
@@ -52,20 +52,10 @@ eCB = df[f"W{element_C}{element_B}"].values
 eBB = df[f"W{element_B}{element_B}"].values
 eCC = df[f"W{element_C}{element_C}"].values
 
-eBi1s = df[f"Eseg_i({element_B})"].values
-eCj1s = df[f"Eseg_j({element_C})"].values
-eBj1s = df[f"Eseg_j({element_B})"].values
-eCi1s = df[f"Eseg_i({element_C})"].values
-
-eBi2s = df[f"Eseg_i({element_B}).1"].values
-eCj2s = df[f"Eseg_j({element_C}).1"].values
-eBj2s = df[f"Eseg_j({element_B}).1"].values
-eCi2s = df[f"Eseg_i({element_C}).1"].values
-
-eBis = (eBi1s + eBi2s)/2
-eCis = (eCi1s + eCi2s)/2
-eBjs = (eBj1s + eBj2s)/2
-eCjs = (eCj1s + eCj2s)/2
+eBis = df[f"Eseg_i({element_B})"].values
+eCjs = df[f"Eseg_j({element_C})"].values
+eBjs = df[f"Eseg_j({element_B})"].values
+eCis = df[f"Eseg_i({element_C})"].values
 
 
 ids1 = np.unique(ids_c)
