@@ -122,6 +122,8 @@ def run_single_calculation(task_args):
 
     """Функция для расчета одного значения mu в ОЗУ с гарантированным бэкапом."""
     root_dir = os.getcwd()
+    output_dir = os.path.join(root_dir, "mc_auto_output")
+    os.makedirs(output_dir, exist_ok=True)
     vals_string = "_".join([str(val) for val in vals])
     work_dir = os.path.join(RAM_DISK_ROOT, f"run_mu_{vals_string}")
     
@@ -133,9 +135,9 @@ def run_single_calculation(task_args):
     os.makedirs(work_dir, exist_ok=True)
 
     # Трехуровневый поиск рестарт файлов
-    specific_restart_src = os.path.join(root_dir, f"{FOLDER_TO_COPY}_mu_{vals_string}")
-    backup_restart_src = os.path.join(root_dir, f"BACKUP_mu_{vals_string}", FOLDER_TO_COPY)
-    base_restart_src = os.path.join(root_dir, FOLDER_TO_COPY)
+    specific_restart_src = os.path.join(output_dir, f"{FOLDER_TO_COPY}_mu_{vals_string}")
+    backup_restart_src = os.path.join(output_dir, f"BACKUP_mu_{vals_string}", FOLDER_TO_COPY)
+    base_restart_src = os.path.join(output_dir, FOLDER_TO_COPY)
     dest_restart_folder = os.path.join(work_dir, FOLDER_TO_COPY)
 
     if os.path.exists(specific_restart_src):
@@ -147,7 +149,7 @@ def run_single_calculation(task_args):
 
     # Копирование входных файлов
     for INPUT_FILE in INPUT_FILES:
-        search_pattern = os.path.join(root_dir, INPUT_FILE)
+        search_pattern = os.path.join(output_dir, INPUT_FILE)
         found_files = glob.glob(search_pattern)
         if found_files:
             for src_file_path in found_files:
@@ -182,24 +184,24 @@ def run_single_calculation(task_args):
         # --- СОХРАНЕНИЕ РЕЗУЛЬТАТОВ (ШТАТНОЕ) ---
         work_folder_copy = os.path.join(work_dir, FOLDER_TO_COPY)
         if os.path.exists(work_folder_copy):
-            copied_folder_name = os.path.join(root_dir, f"{FOLDER_TO_COPY}_mu_{vals_string}")
+            copied_folder_name = os.path.join(output_dir, f"{FOLDER_TO_COPY}_mu_{vals_string}")
             if os.path.exists(copied_folder_name): shutil.rmtree(copied_folder_name)
             shutil.copytree(work_folder_copy, copied_folder_name)
 
         work_folder_rename = os.path.join(work_dir, FOLDER_TO_RENAME)
         if os.path.exists(work_folder_rename):
-            renamed_folder_name = os.path.join(root_dir, f"{FOLDER_TO_RENAME}_mu_{vals_string}")
+            renamed_folder_name = os.path.join(output_dir, f"{FOLDER_TO_RENAME}_mu_{vals_string}")
             if os.path.exists(renamed_folder_name): shutil.rmtree(renamed_folder_name)
             shutil.move(work_folder_rename, renamed_folder_name)
 
         work_file_rename = os.path.join(work_dir, FILE_TO_RENAME)
         if os.path.exists(work_file_rename):
             name, ext = os.path.splitext(FILE_TO_RENAME)
-            renamed_file_name = os.path.join(root_dir, f"{name}_mu_{vals_string}{ext}")
+            renamed_file_name = os.path.join(output_dir, f"{name}_mu_{vals_string}{ext}")
             if os.path.exists(renamed_file_name): os.remove(renamed_file_name)
             shutil.move(work_file_rename, renamed_file_name)
 
-        old_backup = os.path.join(root_dir, f"BACKUP_mu_{vals_string}")
+        old_backup = os.path.join(output_dir, f"BACKUP_mu_{vals_string}")
         if os.path.exists(old_backup): shutil.rmtree(old_backup)
 
         success_saved = True 
@@ -217,7 +219,7 @@ def run_single_calculation(task_args):
         _current_process = None
         # --- АВАРИЙНАЯ ЭВАКУАЦИЯ ДАННЫХ ---
         if not success_saved and os.path.exists(work_dir):
-            backup_dir = os.path.join(root_dir, f"BACKUP_mu_{vals_string}")
+            backup_dir = os.path.join(output_dir, f"BACKUP_mu_{vals_string}")
             print(f"[БЭКАП] Спасение данных mu {vals_string} -> {backup_dir}")
             try:
                 if os.path.exists(backup_dir): shutil.rmtree(backup_dir)
