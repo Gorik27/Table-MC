@@ -1,8 +1,12 @@
 #!/home/user/miniconda3/bin/python
+"""
+TODO надо проверить, правильность кода, особенно совпадает ли порядок mu с порядком Х
+"""
 import glob
 import os
 import re
 import numpy as np
+from tqdm import tqdm
 
 
 def process_mc_data():
@@ -13,79 +17,89 @@ def process_mc_data():
 
     # Находим все txt файлы в текущей директории
     all_files = glob.glob("*.txt")
+    nfiles = 0
+    mc_output_files = []
+    matches = []
 
     for file_path in all_files:
         match = pattern.match(file_path)
         if match:
+            nfiles += 1
+            mc_output_files.append(file_path)
+            matches.append(match.group(1))
+
+    for cnt, file_path in enumerate(tqdm(mc_output_files)):
+        # Извлекаем значение val и преобразуем во float
+        vals = [float(item) for item in matches[cnt].lstrip('_').split('_')]
+        
+        try:
+            # Читаем только названия колонок (первую строку), чтобы узнать их индексы
+            with open(file_path, "r") as f:
+                f.readline()  # пропуск первой строки
+                header = f.readline().split()
+
+            if not header:
+                print(f"Пропущен файл {file_path}: пустой заголовок.")
+                continue
+
+            # Находим все колонки вида X_* динамически
+            x_cols = [col for col in header if col.startswith("X_")]
+            elements = [col.replace("X_", "") for col in x_cols]
             
-            # Извлекаем значение val и преобразуем во float
-            vals = [float(item) for item in match.group(1).lstrip('_').split('_')]
-            print(vals)
-            try:
-                # Читаем только названия колонок (первую строку), чтобы узнать их индексы
-                with open(file_path, "r") as f:
-                    f.readline() # пропуск первой строки
-                    header = f.readline().split()
 
-                if not header:
-                    print(f"Пропущен файл {file_path}: пустой заголовок.")
-                    continue
+            # Если нет колонок типа X_*, пропускаем файл
+            if not x_cols:
+                print(
+                    f"Пропущен файл {file_path}: отсутствуют колонки 'X_*'."
+                )
+                continue
 
-                # Находим индексы нужных колонок
-                try:
-                    idx_x1 = header.index("X_Ni") #TODO
-                    if len(vals)==2:
-                        idx_x2 = header.index("X_Cu")
-                    idx_energy = header.index("per_site_energy")
-                except ValueError:
-                    print(
-                        f"Пропущен файл {file_path}: отсутствуют колонки 'X_*' или 'per_site_energy'."
-                    )
-                    continue
+            # Находим индексы ВСЕХ колонок включая per_site_energy
+            indices = {}
+            for i, col in enumerate(header):
+                if col.startswith("X_") or col == "per_site_energy":
+                    indices[col] = i
 
-                # Загружаем данные с помощью np.loadtxt
-                # skiprows=1 пропускает строку с заголовками
-                # usecols считывает только нужные нам столбцы
-                if len(vals)==1:
-                    data = np.loadtxt(
-                        file_path, skiprows=2, usecols=(idx_x1, idx_energy)
-                    )
-                if len(vals)==2:
-                    data = np.loadtxt(
-                        file_path, skiprows=2, usecols=(idx_x1, idx_x2, idx_energy)
-                    )
+            energy_idx = indices["per_site_energy"]
+            
+            all_indices = x_cols + ["per_site_energy"]  # строки
+            int_indices = np.array([indices[col] for col in all_indices])
 
-                # Если в файле была всего одна строка данных, numpy сделает массив одномерным
-                if data.ndim == 1:
-                    data = np.atleast_2d(data)
+            # Загружаем данные с помощью np.loadtxt
+            # skiprows=1 пропускает строку с заголовками
+            data = np.loadtxt(
+                file_path, skiprows=2, usecols=int_indices
+            )
 
-                num_rows = data.shape[0]
-                if num_rows == 0:
-                    print(f"Пропущен файл {file_path}: нет данных.")
-                    continue
+            # Если в файле была всего одна строка данных, numpy сделает массив одномерным
+            if data.ndim == 1:
+                data = np.atleast_2d(data)
 
-                # Вычисляем количество строк для последних 20%
-                tail_size = int(num_rows * 0.2)
-                if tail_size == 0:
-                    tail_size = 1  # Берем минимум одну строку, если файл очень короткий
+            num_rows = data.shape[0]
+            if num_rows == 0:
+                print(f"Пропущен файл {file_path}: нет данных.")
+                continue
 
-                # Срезаем последние 20% строк
-                tail_data = data[-tail_size:]
+            # Вычисляем количество строк для последних 20%
+            tail_size = int(num_rows * 0.2)
+            if tail_size == 0:
+                tail_size = 1  # Берем минимум одну строку, если файл очень короткий
 
-                # Считаем среднее арифметическое по колонкам (ось 0)
-                mean_values = np.mean(tail_data, axis=0)
-                mean_x1 = mean_values[0]
-                if len(vals)==2:
-                    mean_x2 = mean_values[1]
-                mean_energy = mean_values[-1]
+            # Срезаем последние 20% строк
+            tail_data = data[-tail_size:]
 
-                # Сохраняем результат в список
-                if len(vals)==1:
-                    data_list.append([vals[0], mean_x1, mean_energy])
-                if len(vals)==2:
-                    data_list.append([vals[0], vals[1], mean_x1, mean_x2, mean_energy])
-            except Exception as e:
-                print(f"Ошибка при обработке файла {file_path}: {e}")
+            # Считаем среднее арифметическое по колонкам (ось 0)
+            mean_values = np.mean(tail_data, axis=0)
+            
+            # x_means - это все столбцы кроме последнего (energy)
+            n_x_cols = len(x_cols)
+            x_means = mean_values[:n_x_cols]
+            mean_energy = mean_values[-1]
+
+            # Формируем список для одного файла: [mu, mean_X_1, ..., mean_per_site_energy]
+            data_list.append(vals + list(x_means) + [mean_energy])
+        except Exception as e:
+            print(f"Ошибка при обработке файла {file_path}: {e}")
 
     if not data_list:
         print("Файлы формата 'mc_output_mu_val.txt' не найдены.")
@@ -95,35 +109,36 @@ def process_mc_data():
     result_array = np.array(data_list)
 
     # Сортируем массив по первой колонке (по возрастанию vals)
-    sorted_indices = np.lexsort((result_array[:, 1], result_array[:, 0]))
+    # lexsort требует фиксированное число ключей, поэтому сортируем только по first column
+    sorted_indices = np.lexsort(result_array.T[:len(vals)][::-1])
     result_array = result_array[sorted_indices]
-
+    
     # Сохраняем итоговые зависимости в файл с помощью np.savetxt
     output_filename = "mc_auto_output.txt"
-    if len(vals)==1:
-        header_text = "mu_1\tmean_X_1\tmean_per_site_energy"
-        np.savetxt(
-            output_filename,
-            result_array,
-            fmt="%.6f",
-            delimiter="\t",
-            header=header_text,
-            comments="",
-        )
-    if len(vals)==2:
-        header_text = "mu_1\tmu_2\tmean_X_1\tmean_X_2\tmean_per_site_energy"
-        np.savetxt(
-            output_filename,
-            result_array,
-            fmt="%.6f",
-            delimiter="\t",
-            header=header_text,
-            comments="",
-        )
+    
+    # Формируем заголовок динамически на основе найденных элементов
+    # Первые две колонки: mu_1, mu_2 (значения из имени файла)
+    # Далее: mean_X_*, ..., mean_per_site_energy
+    header_parts = [f"mu_{elements[i+1]}" for i in range(len(vals))]
+    
+    # Добавляем mean_ для каждого элемента X_*
+    for col_name in x_cols:
+        header_parts.append(f"mean_{col_name}")
+    
+    # Добавляем энергию в конце
+    header_parts.append("mean_per_site_energy")
+    header_text = "\t".join(header_parts)
+    
+    np.savetxt(
+        output_filename,
+        result_array,
+        fmt="%.6f",
+        delimiter="\t",
+        header=header_text,
+        comments="",
+    )
 
     print(f"\nУспешно сохранено! Результаты записаны в: {output_filename}")
-    #print(header_text)
-    #print(result_array)
 
 
 if __name__ == "__main__":

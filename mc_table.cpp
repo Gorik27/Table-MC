@@ -334,7 +334,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "[ERROR]: error during creating of mc_output.txt file:" << std::endl;
         return 1; 
     }
-    out << "mc_output" << std::endl;
+    out << "mc_output; elements " << element_str << "; mu " << mu_str << "; kT " << kT << std::endl;
     out << std::left; 
     out << std::setw(14) << "step" 
         << std::setw(12) << "acc";
@@ -413,7 +413,7 @@ int main(int argc, char* argv[]) {
         {
             bar.update(step); 
             //thermo
-            double acc = static_cast<double>(accepted)/dump_each;
+            double acc = static_cast<double>(accepted)/print_each;
             out << std::left;
             out << std::setw(14) << step;
             out << std::setw(12) << std::fixed << std::setprecision(6) << acc;

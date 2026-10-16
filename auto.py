@@ -14,11 +14,27 @@ import argparse
 MAX_NUM_WORKERS = 50
 parser = argparse.ArgumentParser()
 parser.add_argument("pos_args", type=str, nargs="+", help='<chemical_specie_1> <mu_min_1> <mu_max_1> ...')
-parser.add_argument("--num", type=int, nargs="+", default=[50])
-parser.add_argument("-j", type=int, default=None)
+parser.add_argument("--num", type=int, nargs="+", default=[50], help='number of mu points for each specie')
+parser.add_argument("-T", type=float, default=3, help='temperature (kT) in kJ/mol (300K = 2.5 kJ/mol)')
+parser.add_argument("-m", "--matrix", type=str, default="Ag", help='chrmical specie of matrix')
+parser.add_argument("-s", "--steps", type=int, default=500000000, help='number of MC steps')
+parser.add_argument("-j", type=int, default=None, help='number of workers')
+parser.add_argument("--print-each", type=int, default=None, help='number of MC steps between printing thermo to mc_output.txt. if is None print-each=steps/5000')
+parser.add_argument("--dump-each", type=int, default=None, help='number of MC steps between savind dumps. if is None write only final dump')
+parser.add_argument("--nrows", type=int, default=1, help='the number of rows (copies of each site type) in MC simulation')
+parser.add_argument("--mu-precision", type=int, default=4, help='the number of decimal places for the mu value')
 args = parser.parse_args()
 
-mu_precision = 4
+steps = args.steps
+if args.print_each is None:
+    print_each = int(round(steps/5000))
+else:
+    print_each = args.print_each
+kT = args.T
+matrix_specie = args.matrix
+nrows = args.nrows
+
+mu_precision = args.mu_precision
 
 if len(args.pos_args)%3 != 0:
     raise ValueError("Number of positional args must be the multiple of 3!")
@@ -41,7 +57,11 @@ else:
     NUM_WORKERS = args.j
 
 # --- НАСТРОЙКИ ---
-argument_string = "mc_table -s 500000000 -n 1 -T 3 Ag 0.0"
+if args.dump_each is None:
+    dump_each = steps # write only final dump
+else:
+    dump_each = args.dump_each
+argument_string = f"mc_table -s {steps} --print-each {print_each} --dump-each {dump_each} -n {nrows} -T {kT} {matrix_specie} 0.0" 
 COMMAND = shlex.split(argument_string)
 
 def create_grid(*axes):
