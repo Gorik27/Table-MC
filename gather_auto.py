@@ -28,24 +28,53 @@ def process_mc_data():
             mc_output_files.append(file_path)
             matches.append(match.group(1))
 
+    read_metadata = False
+
     for cnt, file_path in enumerate(tqdm(mc_output_files)):
         # Извлекаем значение val и преобразуем во float
-        vals = [float(item) for item in matches[cnt].lstrip('_').split('_')]
+        vals_fname = [float(item) for item in matches[cnt].lstrip('_').split('_')]
         
         try:
             # Читаем только названия колонок (первую строку), чтобы узнать их индексы
             with open(file_path, "r") as f:
-                f.readline()  # пропуск первой строки
+                metadata = f.readline().split(";")  # mc_output; elements Ag Cu Ni ; mu 0 -7.7551 -20 ; kT 3
+                metadata = [e.strip() for e in metadata]
+
                 header = f.readline().split()
 
             if not header:
                 print(f"Пропущен файл {file_path}: пустой заголовок.")
                 continue
 
+            kT = float([e for e in metadata if e.startswith("kT")][0].split()[1])
+
             # Находим все колонки вида X_* динамически
             x_cols = [col for col in header if col.startswith("X_")]
             elements = [col.replace("X_", "") for col in x_cols]
-            
+
+            elements_mu = [e for e in metadata if e.startswith("elements")][0].split()[1:]
+            mu = list(map(float, [e for e in metadata if e.startswith("mu")][0].split()[1:]))
+            if mu:
+                vals = mu
+                assert set(elements)==set(elements_mu)
+            else:
+                vals = vals_fname
+                elements_mu = elements
+                if not read_metadata:
+                    print("[WARNING]: Can not found mu in file's metadata, use values from filename. The order of mu columns may be incorrect!")           
+
+
+            if not read_metadata:
+                elements0 = elements
+                elements_mu0 = elements_mu
+                kT0 = kT
+                read_metadata = True
+
+            else:
+                assert elements==elements0
+                assert elements_mu==elements_mu0
+                assert kT == kT0
+
 
             # Если нет колонок типа X_*, пропускаем файл
             if not x_cols:
@@ -119,7 +148,7 @@ def process_mc_data():
     # Формируем заголовок динамически на основе найденных элементов
     # Первые две колонки: mu_1, mu_2 (значения из имени файла)
     # Далее: mean_X_*, ..., mean_per_site_energy
-    header_parts = [f"mu_{elements[i+1]}" for i in range(len(vals))]
+    header_parts = [f"mu_{elements_mu0[i+1]}" for i in range(len(elements_mu0)-1)]
     
     # Добавляем mean_ для каждого элемента X_*
     for col_name in x_cols:
@@ -127,7 +156,7 @@ def process_mc_data():
     
     # Добавляем энергию в конце
     header_parts.append("mean_per_site_energy")
-    header_text = "\t".join(header_parts)
+    header_text = f"kT {kT0};\n"+"\t".join(header_parts)
     
     np.savetxt(
         output_filename,
