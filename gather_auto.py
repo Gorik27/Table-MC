@@ -53,7 +53,7 @@ def process_mc_data():
             elements = [col.replace("X_", "") for col in x_cols]
 
             elements_mu = [e for e in metadata if e.startswith("elements")][0].split()[1:]
-            mu = list(map(float, [e for e in metadata if e.startswith("mu")][0].split()[1:]))
+            mu = list(map(float, [e for e in metadata if e.startswith("mu")][0].split()[2:]))
             if mu:
                 vals = mu
                 assert set(elements)==set(elements_mu)
