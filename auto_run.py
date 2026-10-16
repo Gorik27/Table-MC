@@ -135,9 +135,9 @@ def run_single_calculation(task_args):
     os.makedirs(work_dir, exist_ok=True)
 
     # Трехуровневый поиск рестарт файлов
-    specific_restart_src = os.path.join(output_dir, f"{FOLDER_TO_COPY}_mu_{vals_string}")
+    specific_restart_src = os.path.join(root_dir, f"{FOLDER_TO_COPY}_mu_{vals_string}")
     backup_restart_src = os.path.join(output_dir, f"BACKUP_mu_{vals_string}", FOLDER_TO_COPY)
-    base_restart_src = os.path.join(output_dir, FOLDER_TO_COPY)
+    base_restart_src = os.path.join(root_dir, FOLDER_TO_COPY)
     dest_restart_folder = os.path.join(work_dir, FOLDER_TO_COPY)
 
     if os.path.exists(specific_restart_src):
@@ -149,7 +149,7 @@ def run_single_calculation(task_args):
 
     # Копирование входных файлов
     for INPUT_FILE in INPUT_FILES:
-        search_pattern = os.path.join(output_dir, INPUT_FILE)
+        search_pattern = os.path.join(root_dir, INPUT_FILE)
         found_files = glob.glob(search_pattern)
         if found_files:
             for src_file_path in found_files:
@@ -167,8 +167,8 @@ def run_single_calculation(task_args):
 
     try:
         if _is_leader_worker:
-            print(f"\n[ВНИМАНИЕ] Процесс mu={vals_string} выбран ЛИДЕРОМ. Его вывод транслируется ниже:\n")
-            print(current_command)
+            print(f"\n[process #{idx}/{MU_POINTS} mu={vals_string}] вывод транслируется ниже:\n")
+            print(" ".join(current_command))
             process = subprocess.Popen(current_command, cwd=work_dir, stdout=None, stderr=None, start_new_session=True)
         else:
             process = subprocess.Popen(current_command, cwd=work_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)

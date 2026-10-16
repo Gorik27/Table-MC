@@ -16,13 +16,14 @@ def process_mc_data():
     data_list = []
 
     # Находим все txt файлы в текущей директории
-    all_files = glob.glob("*.txt")
+    all_files = glob.glob("mc_auto_output/*.txt")
     nfiles = 0
     mc_output_files = []
     matches = []
 
     for file_path in all_files:
-        match = pattern.match(file_path)
+        filename = os.path.basename(file_path)
+        match = pattern.match(filename)
         if match:
             nfiles += 1
             mc_output_files.append(file_path)
