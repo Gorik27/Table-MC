@@ -16,12 +16,10 @@ elements = args.elements
 if len(elements)!=2:
     raise ValueError("currently supports only 2 solute specie")
 
+element_B = elements[0]
+element_C = elements[1]
 
 
-eAA = None
-e0B = None
-e0C = None
-blk_idx = None
 skiprows = 0
 with open(fname, "r") as f:
     for line in f:
