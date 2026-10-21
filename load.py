@@ -1,61 +1,52 @@
 #!/home/user/miniconda3/bin/python
 import numpy as np
-import pandas as pd
 from matplotlib import pyplot as plt
 import re
+import argparse
 
-fname = "data.txt"
-element_B = "Ni"
-element_C = "Cu"
+
+parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+parser.add_argument("elements", type=str, nargs="+", help='<chemical_specie_1> <chemical_specie_2> ...')
+parser.add_argument("-f", "--fname", type=str, default="data.txt", help='data file')
+args = parser.parse_args()
+
+fname = args.fname
+elements = args.elements
+
+if len(elements)!=2:
+    raise ValueError("currently supports only 2 solute specie")
+
+
 
 eAA = None
 e0B = None
 e0C = None
 blk_idx = None
+skiprows = 0
 with open(fname, "r") as f:
     for line in f:
-        # Если дошли до строк без решетки (начались данные), прекращаем парсить шапку
         if not line.startswith("#"):
             break
-        
-        # 1. Ищем Eaa
-        if "Eaa =" in line:
-            match = re.search(r"Eaa\s*=\s*([-\d.]+)", line)
-            if match:
-                eAA = float(match.group(1))
-                
-        # 2. Ищем E(Ni...)
-        elif f"E({element_C}@" in line:
-            match = re.search(r"=\s*([-\d.]+)$", line)
-            if match:
-                e0C = float(match.group(1))
-                
-        # 3. Ищем E(Cu...)
-        elif f"E({element_B}@" in line:
-            match = re.search(r"=\s*([-\d.]+)$", line)
-            if match:
-                e0B = float(match.group(1))
-                
-        # 4. Ищем blk_idx
-        elif "blk_idx =" in line:
-            match = re.search(r"blk_idx\s*=\s*(\d+)", line)
-            if match:
-                blk_idx = int(match.group(1))
+        else:
+            skiprows+=1
 
-df = pd.read_csv(fname, header=0, sep='\s+', comment='#')
+        if "Columns:" in line:
+            columns = line.replace('#', '').replace('Columns:', '').strip().split()
 
-ids_c = df["i"].values.astype(int)
-ids_n = df["j"].values.astype(int)
+df = np.loadtxt(fname, skiprows=skiprows)
 
-eBC = df[f"W{element_B}{element_C}"].values
-eCB = df[f"W{element_C}{element_B}"].values
-eBB = df[f"W{element_B}{element_B}"].values
-eCC = df[f"W{element_C}{element_C}"].values
+ids_c = df[:, columns.index("i")].astype(int)
+ids_n = df[:, columns.index("j")].astype(int)
 
-eBis = df[f"Eseg_i({element_B})"].values
-eCjs = df[f"Eseg_j({element_C})"].values
-eBjs = df[f"Eseg_j({element_B})"].values
-eCis = df[f"Eseg_i({element_C})"].values
+eBC = df[:, columns.index(f"W{element_B}{element_C}")]
+eCB = df[:, columns.index(f"W{element_C}{element_B}")]
+eBB = df[:, columns.index(f"W{element_B}{element_B}")]
+eCC = df[:, columns.index(f"W{element_C}{element_C}")]
+
+eBis = df[:, columns.index(f"Eseg_i({element_B})")]
+eCjs = df[:, columns.index(f"Eseg_j({element_C})")]
+eBjs = df[:, columns.index(f"Eseg_j({element_B})")]
+eCis = df[:, columns.index(f"Eseg_i({element_C})")]
 
 
 ids1 = np.unique(ids_c)

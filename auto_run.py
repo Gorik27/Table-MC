@@ -51,8 +51,9 @@ elif len(args.num) == 1:
 else:
     raise ValueError("number of mu points [--num] must be equal dimension to n_solutes or single value!")
 
+TOTAL_TASKS = int(np.prod(MU_POINTS))
 if args.j is None:
-    NUM_WORKERS = min(MAX_NUM_WORKERS, int(np.prod(MU_POINTS)))
+    NUM_WORKERS = min(MAX_NUM_WORKERS, TOTAL_TASKS)
 else:
     NUM_WORKERS = args.j
 
@@ -167,7 +168,7 @@ def run_single_calculation(task_args):
 
     try:
         if _is_leader_worker:
-            print(f"\n[process #{idx}/{MU_POINTS} mu={vals_string}] вывод транслируется ниже:\n")
+            print(f"\n[process #{idx}/{TOTAL_TASKS} mu={vals_string}] вывод транслируется ниже:\n")
             print(" ".join(current_command))
             process = subprocess.Popen(current_command, cwd=work_dir, stdout=None, stderr=None, start_new_session=True)
         else:
